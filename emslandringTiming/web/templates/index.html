@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>emslandringTiming</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ── -->
+  <header id="header">
+    <span class="brand">emslandringTiming</span>
+    <div id="decoder-status">
+      <div class="dot"></div>
+      <span id="decoder-text">VERBINDE...</span>
+      <span id="decoder-noise" style="margin-left:4px;"></span>
+      <span id="decoder-loop" style="margin-left:4px;"></span>
+    </div>
+    <div class="header-spacer"></div>
+    <div id="nav-tabs">
+      <button data-view="timing" class="active">Timing</button>
+      <button data-view="settings">Einstellungen</button>
+      <button data-view="transponders">Transponder</button>
+    </div>
+  </header>
+
+  <!-- ── Content ── -->
+  <div id="content">
+
+    <!-- ── Timing View ── -->
+    <div id="view-timing" class="view active">
+
+      <!-- Sidebar -->
+      <aside id="sidebar">
+        <div id="sidebar-header">
+          <button id="day-prev">‹</button>
+          <span id="day-label">–</span>
+          <button id="day-next">›</button>
+        </div>
+        <div id="run-list"></div>
+        <div id="run-list-footer">
+          <button id="btn-add-run">+ Lauf hinzufügen</button>
+        </div>
+      </aside>
+
+      <!-- Main Panel -->
+      <div id="main-panel">
+
+        <!-- Run Header -->
+        <div id="run-header">
+          <span id="run-title">–</span>
+          <span id="run-mode-badge">GP</span>
+          <span id="run-status-text"></span>
+          <div class="header-spacer"></div>
+          <div id="run-timer">--:--</div>
+          <div id="run-controls">
+            <button id="btn-arm"    class="btn btn-green" disabled>▶ Scharf</button>
+            <button id="btn-start"  class="btn btn-green" style="display:none">▶ Start</button>
+            <button id="btn-pause"  class="btn btn-yellow" disabled>⏸ Pause</button>
+            <button id="btn-resume" class="btn btn-green"  style="display:none">▶ Weiter</button>
+            <button id="btn-abort"  class="btn btn-red"    disabled>⏹ Beenden</button>
+          </div>
+        </div>
+
+        <!-- Kart Table -->
+        <div id="kart-table-container">
+          <div id="empty-state">
+            <div class="empty-icon">🏁</div>
+            <p>Lauf auswählen oder starten</p>
+          </div>
+          <table id="kart-table" style="display:none">
+            <thead>
+              <tr>
+                <th style="width:38px">Pos</th>
+                <th style="width:46px" class="num">Kart</th>
+                <th>Name</th>
+                <th style="width:40px" class="num">Rdn</th>
+                <th style="width:72px" class="num">Beste</th>
+                <th style="width:72px" class="num">Letzte</th>
+                <th style="width:72px" class="num">Ø5</th>
+                <th style="width:26px" class="num">→</th>
+                <th style="width:80px">Prog</th>
+                <th style="width:44px" class="num">Sig</th>
+              </tr>
+            </thead>
+            <tbody id="kart-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings View ── -->
+    <div id="view-settings" class="view">
+      <div class="settings-section">
+        <h3>Läufe & Zeiten</h3>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>Läufe pro Tag</label>
+            <input type="number" id="s-runs-per-day" min="1" max="50">
+          </div>
+          <div class="form-group">
+            <label>Training Standardzeit (Sek)</label>
+            <input type="number" id="s-training-duration" min="30">
+          </div>
+          <div class="form-group">
+            <label>Grand Prix Zeit (Sek)</label>
+            <input type="number" id="s-gp-time-duration" min="30">
+          </div>
+          <div class="form-group">
+            <label>Grand Prix Runden</label>
+            <input type="number" id="s-gp-laps" min="1">
+          </div>
+          <div class="form-group">
+            <label>Wartezeit Training (Sek)</label>
+            <input type="number" id="s-wait-time" min="5">
+          </div>
+          <div class="form-group">
+            <label>Wartezeit Grand Prix (Sek)</label>
+            <input type="number" id="s-wait-time-gp" min="5">
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>Hardware / Netzwerk</h3>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>Decoder IP</label>
+            <input type="text" id="s-decoder-ip">
+          </div>
+          <div class="form-group">
+            <label>Decoder Port</label>
+            <input type="number" id="s-decoder-port">
+          </div>
+          <div class="form-group">
+            <label>HTTP Port</label>
+            <input type="number" id="s-http-port">
+          </div>
+          <div class="form-group">
+            <label>WebSocket Port</label>
+            <input type="number" id="s-ws-port">
+          </div>
+          <div class="form-group">
+            <label>Emulator Port (Kloft)</label>
+            <input type="number" id="s-emulator-port">
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:4px">
+        <button class="btn btn-green" id="btn-save-settings">Einstellungen speichern</button>
+        <span id="settings-saved" style="margin-left:10px;font-size:11px;color:var(--green);display:none">✓ Gespeichert</span>
+      </div>
+    </div>
+
+    <!-- ── Transponders View ── -->
+    <div id="view-transponders" class="view" style="flex-direction:column">
+      <div style="padding:20px;overflow-y:auto;width:100%">
+        <div class="settings-section" style="max-width:900px">
+          <h3>Transponder / Karts</h3>
+          <table id="transponder-table">
+            <thead>
+              <tr>
+                <th>Kart</th>
+                <th>Name</th>
+                <th>Klasse</th>
+                <th>Transponder-ID</th>
+                <th class="num">Passings</th>
+                <th class="num">Laufzeit ges.</th>
+                <th class="num">Ø Stärke</th>
+                <th style="width:100px">Stärke-Verlauf</th>
+              </tr>
+            </thead>
+            <tbody id="transponder-tbody"></tbody>
+          </table>
+        </div>
+        <div class="settings-section" style="max-width:900px;margin-top:16px">
+          <h3>Decoder Gesundheit (Rauschen &amp; Loop-Signal)</h3>
+          <canvas id="health-chart" width="800" height="160"
+                  style="width:100%;height:160px;display:block"></canvas>
+          <p style="font-size:10px;color:var(--text-muted);margin-top:4px">
+            Grün = Loop-Signal · Gelb = Rauschen · Letzte 500 Messungen
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<!-- ── Context Menu ── -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-settings">⚙ Lauf-Einstellungen</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item" id="ctx-kart-name">✏ Kart-Name ändern</div>
+</div>
+
+<!-- ── Modal Overlay ── -->
+<div id="modal-overlay">
+
+  <!-- Run Settings Modal -->
+  <div class="modal" id="modal-run-settings">
+    <h2>Lauf-Einstellungen</h2>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="ms-name">
+    </div>
+    <div class="form-group">
+      <label>Modus</label>
+      <select id="ms-mode">
+        <option value="training">Training</option>
+        <option value="gp_time">Grand Prix – Zeit</option>
+        <option value="gp_laps">Grand Prix – Runden</option>
+      </select>
+    </div>
+    <div id="ms-duration-group" class="form-group">
+      <label>Zeit (Sekunden)</label>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Stunden</label>
+          <input type="number" id="ms-hours" min="0" max="9" value="0">
+        </div>
+        <div class="form-group">
+          <label>Minuten</label>
+          <input type="number" id="ms-minutes" min="0" max="59" value="7">
+        </div>
+        <div class="form-group">
+          <label>Sekunden</label>
+          <input type="number" id="ms-seconds" min="0" max="59" value="0">
+        </div>
+      </div>
+    </div>
+    <div id="ms-laps-group" class="form-group" style="display:none">
+      <label>Rundenanzahl</label>
+      <input type="number" id="ms-gp-laps" min="1" value="15">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="ms-cancel">Abbrechen</button>
+      <button class="btn btn-sm btn-green" id="ms-save">Speichern</button>
+    </div>
+  </div>
+
+  <!-- Kart Name Modal -->
+  <div class="modal" id="modal-kart-name" style="display:none">
+    <h2>Kart-Name ändern</h2>
+    <div id="kart-name-list"></div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="kn-close">Schließen</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
