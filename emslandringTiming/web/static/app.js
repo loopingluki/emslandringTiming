@@ -1404,7 +1404,7 @@ async function openTransponderModal(transponder_id) {
 
   try {
     const hist = await fetch(`/api/transponders/${transponder_id}/history?days=0`).then(r => r.json());
-    _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.started_at })).reverse();
+    _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
     drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
   } catch(_) {}
 }
@@ -1419,7 +1419,7 @@ document.getElementById('td-range-pills').addEventListener('click', async e => {
   pill.classList.add('active');
   _tdDays = +pill.dataset.days;
   const hist = await fetch(`/api/transponders/${_tdEditId}/history?days=${_tdDays}`).then(r => r.json());
-  _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.started_at })).reverse();
+  _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
   drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
 });
 
@@ -1622,7 +1622,7 @@ function drawStrengthChart(canvasId, data, tooltipId) {
   if (!values || values.length < 2) {
     ctx.fillStyle = 'var(--text-muted)';
     ctx.font = '12px monospace';
-    ctx.fillText('Noch keine Daten', 20, h / 2);
+    ctx.fillText(values && values.length === 0 ? 'Keine Daten im gewählten Zeitraum' : 'Noch keine Daten', 20, h / 2);
   } else {
     const c = _themeColors();
     const step = w / (values.length - 1);
@@ -1657,7 +1657,7 @@ function drawStrengthChart(canvasId, data, tooltipId) {
         (d,i) => i, d => typeof d === 'object' ? d.strength : d,
         (d, i) => {
           const v = typeof d === 'object' ? d.strength : d;
-          const ts = typeof d === 'object' && d.ts ? new Date(d.ts * 1000).toLocaleDateString('de-DE') : '';
+          const ts = typeof d === 'object' && d.ts ? new Date(d.ts * 1000).toLocaleString('de-DE') : '';
           return `Stärke: ${v}${ts ? '  ' + ts : ''}`;
         }
       );
@@ -1670,7 +1670,15 @@ let _healthChartData = [];
 function drawHealthChart(records) {
   _healthChartData = records;
   const canvas = document.getElementById('health-chart');
-  if (!canvas || !records.length) return;
+  if (!canvas) return;
+  const ctx2 = canvas.getContext('2d');
+  if (!records.length) {
+    ctx2.clearRect(0, 0, canvas.width, canvas.height);
+    ctx2.fillStyle = 'var(--text-muted)';
+    ctx2.font = '12px monospace';
+    ctx2.fillText('Keine Daten im gewählten Zeitraum', 20, canvas.height / 2);
+    return;
+  }
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);

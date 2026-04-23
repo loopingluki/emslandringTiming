@@ -168,11 +168,15 @@ async def get_health_history(since_unix: int | None = None,
             async with db.execute(
                 """SELECT id, recorded_at, noise, loop_signal,
                           ROW_NUMBER() OVER (ORDER BY recorded_at) as rn
-                   FROM decoder_health WHERE recorded_at >= ?""",
+                   FROM decoder_health WHERE recorded_at >= ?
+                   ORDER BY recorded_at ASC""",
                 (since_unix,)
             ) as cur:
                 rows = await cur.fetchall()
-            return [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+            result = [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+            # Gleiche Reihenfolge wie ungefilterter Pfad (DESC) damit JS .reverse() passt
+            result.sort(key=lambda r: r["recorded_at"], reverse=True)
+            return result
         else:
             async with db.execute(
                 "SELECT * FROM decoder_health ORDER BY recorded_at DESC LIMIT ?",
@@ -279,16 +283,19 @@ async def get_transponder_strength_history(transponder_id: int,
                 total = (await cur.fetchone())[0]
             interval = max(1, total // max_points)
             async with db.execute(
-                """SELECT p.timestamp_us, p.strength, p.hits, r.started_at,
+                """SELECT p.timestamp_us, p.strength, p.hits,
                           ROW_NUMBER() OVER (ORDER BY p.id) as rn
                    FROM passings p
                    JOIN runs r ON p.run_id = r.id
                    WHERE p.transponder_id = ? AND r.started_at >= ?
-                   ORDER BY p.id""",
+                   ORDER BY p.id ASC""",
                 (transponder_id, since_unix)
             ) as cur:
                 rows = await cur.fetchall()
-            return [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+            result = [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+            # Gleiche Reihenfolge wie ungefilterter Pfad (DESC) damit JS .reverse() passt
+            result.sort(key=lambda r: r["timestamp_us"], reverse=True)
+            return result
         else:
             async with db.execute(
                 "SELECT timestamp_us, strength, hits FROM passings"
