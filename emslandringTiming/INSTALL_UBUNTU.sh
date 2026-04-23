@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # emslandringTiming – Ubuntu Installationsscript
-# Getestet auf Ubuntu 22.04 LTS
+# Getestet auf Ubuntu 20.04, 22.04, 24.04 LTS
 # Ausführen als normaler User (sudo wird bei Bedarf angefordert)
 # =============================================================================
 set -e
@@ -14,12 +14,37 @@ echo "======================================================"
 echo " emslandringTiming – Installation"
 echo "======================================================"
 
-# ── 1. System-Pakete ──────────────────────────────────────────────────────────
+# ── 1. Python-Version ermitteln ───────────────────────────────────────────────
+echo ""
+echo "→ Python-Version prüfen..."
+
+PYTHON_BIN=""
+
+# Erst schauen ob 3.11+ schon vorhanden
+for v in 3.12 3.11; do
+    if command -v python${v} &>/dev/null; then
+        PYTHON_BIN="python${v}"
+        break
+    fi
+done
+
+# Falls nicht: deadsnakes PPA hinzufügen und Python 3.11 installieren
+if [ -z "$PYTHON_BIN" ]; then
+    echo "→ Python 3.11 nicht gefunden – füge deadsnakes PPA hinzu..."
+    sudo apt-get install -y software-properties-common -qq
+    sudo add-apt-repository ppa:deadsnakes/ppa -y
+    sudo apt-get update -qq
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+    PYTHON_BIN="python3.11"
+fi
+
+echo "✓ Verwende $PYTHON_BIN ($(${PYTHON_BIN} --version))"
+
+# ── 2. System-Pakete ──────────────────────────────────────────────────────────
 echo ""
 echo "→ Systemabhängigkeiten installieren..."
 sudo apt-get update -qq
 sudo apt-get install -y \
-    python3.11 python3.11-venv python3.11-dev \
     git curl \
     libpango-1.0-0 libpangoft2-1.0-0 \
     libcairo2 libgdk-pixbuf2.0-0 \
@@ -28,7 +53,7 @@ sudo apt-get install -y \
 
 echo "✓ System-Pakete installiert"
 
-# ── 2. Repository holen ───────────────────────────────────────────────────────
+# ── 3. Repository holen ───────────────────────────────────────────────────────
 echo ""
 echo "→ Repository klonen / aktualisieren..."
 if [ -d "$APP_DIR/.git" ]; then
@@ -42,11 +67,11 @@ fi
 
 cd "$APP_DIR"
 
-# ── 3. Virtuelle Umgebung ──────────────────────────────────────────────────────
+# ── 4. Virtuelle Umgebung ─────────────────────────────────────────────────────
 echo ""
-echo "→ Python Virtual Environment einrichten..."
+echo "→ Python Virtual Environment einrichten ($PYTHON_BIN)..."
 if [ ! -d "$VENV" ]; then
-    python3.11 -m venv "$VENV"
+    $PYTHON_BIN -m venv "$VENV"
 fi
 source "$VENV/bin/activate"
 
@@ -55,22 +80,23 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 pip install weasyprint pypdf -q
 
-echo "✓ Python-Pakete installiert"
+echo "✓ Python-Pakete installiert ($(pip show fastapi | grep Version))"
 deactivate
 
-# ── 4. Datenbank-Verzeichnis anlegen ──────────────────────────────────────────
+# ── 5. Datenverzeichnisse anlegen ─────────────────────────────────────────────
 mkdir -p "$APP_DIR/server/data/templates"
 mkdir -p "$APP_DIR/server/data/fonts"
 
-# ── 5. systemd Service ────────────────────────────────────────────────────────
+# ── 6. systemd Service ────────────────────────────────────────────────────────
 echo ""
-echo "→ systemd Service einrichten..."
+echo "→ systemd Service einrichten (Autostart bei Reboot aktiviert)..."
 
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=emslandringTiming – Kartbahn Zeitnahme
 After=network.target cups.service
+Wants=network.target
 
 [Service]
 Type=simple
@@ -81,8 +107,6 @@ Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-
-# Umgebungsvariablen
 Environment=PYTHONUNBUFFERED=1
 
 [Install]
@@ -91,15 +115,15 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
-echo "✓ Service $SERVICE_NAME eingerichtet"
+echo "✓ Service '$SERVICE_NAME' eingerichtet und für Autostart registriert"
 
-# ── 6. CUPS Drucker-Berechtigung ──────────────────────────────────────────────
+# ── 7. CUPS Drucker-Berechtigung ──────────────────────────────────────────────
 echo ""
 echo "→ Drucker-Berechtigung für User $USER..."
 sudo usermod -aG lpadmin "$USER" 2>/dev/null || true
 echo "✓ User zur lpadmin-Gruppe hinzugefügt"
 
-# ── 7. Fertig ─────────────────────────────────────────────────────────────────
+# ── 8. Fertig ─────────────────────────────────────────────────────────────────
 echo ""
 echo "======================================================"
 echo " Installation abgeschlossen!"
@@ -107,23 +131,28 @@ echo "======================================================"
 echo ""
 echo "NÄCHSTE SCHRITTE:"
 echo ""
-echo "1. Firebase-Credentials kopieren (falls vorhanden):"
-echo "   scp service-account.json ubuntu@<IP>:~/emslandringTiming/"
+echo "1. Firebase-Credentials kopieren (vom Mac aus):"
+echo "   scp service-account.json $USER@$(hostname -I | awk '{print $1}'):~/emslandringTiming/"
 echo "   Dann in config.json eintragen:"
-echo '   "firebase_credentials": "/home/ubuntu/emslandringTiming/service-account.json"'
+echo "   nano $APP_DIR/config.json"
+echo '   → "firebase_credentials": "'$APP_DIR'/service-account.json"'
 echo ""
 echo "2. Service starten:"
 echo "   sudo systemctl start $SERVICE_NAME"
 echo ""
-echo "3. Logs beobachten:"
+echo "3. Logs live beobachten:"
 echo "   sudo journalctl -u $SERVICE_NAME -f"
 echo ""
 echo "4. Im Browser öffnen:"
-echo "   http://localhost:8080"
-echo "   oder vom Netzwerk: http://$(hostname -I | awk '{print $1}'):8080"
+echo "   http://$(hostname -I | awk '{print $1}'):8080"
+echo ""
+echo "Autostart-Test nach Reboot:"
+echo "   sudo reboot"
+echo "   # nach ~30s: sudo systemctl status $SERVICE_NAME"
 echo ""
 echo "Nützliche Befehle:"
-echo "  sudo systemctl status $SERVICE_NAME    # Status"
+echo "  sudo systemctl status  $SERVICE_NAME   # Status anzeigen"
 echo "  sudo systemctl restart $SERVICE_NAME   # Neustart"
-echo "  sudo systemctl stop $SERVICE_NAME      # Stoppen"
+echo "  sudo systemctl stop    $SERVICE_NAME   # Stoppen"
+echo "  sudo journalctl -u $SERVICE_NAME -f    # Live-Log"
 echo ""
