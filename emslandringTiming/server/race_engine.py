@@ -418,6 +418,16 @@ class RaceEngine:
         # Automatischer Ausdruck (im Hintergrund, blockiert Finalize nicht)
         asyncio.create_task(self._auto_print(finished_run_id))
 
+        # Firebase-Sync (im Hintergrund, nur wenn konfiguriert)
+        asyncio.create_task(self._auto_firebase_sync(finished_run_id))
+
+    async def _auto_firebase_sync(self, run_id: int) -> None:
+        try:
+            import firebase_sync
+            await firebase_sync.sync_run(run_id)
+        except Exception as exc:
+            print(f"[race_engine] Firebase-Sync Fehler: {exc}")
+
     async def _auto_print(self, run_id: int) -> None:
         try:
             import printer
