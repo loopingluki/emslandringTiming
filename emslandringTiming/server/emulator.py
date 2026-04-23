@@ -5,6 +5,9 @@ wie die originale MyLaps Race Control Box, damit Kloft-Bridge und andere
 Clients unverändert weiterarbeiten können.
 """
 import asyncio
+import time
+
+from ws_hub import hub
 
 
 def _fmt_laptime(us: int) -> str:
@@ -76,6 +79,12 @@ class Emulator:
             async with self._lock:
                 for w in dead:
                     self._writers.discard(w)
+        await hub.broadcast({
+            "type": "debug_emulator",
+            "ts": time.time(),
+            "line": line,
+            "clients": len(writers),
+        })
 
     # ── Public API called by race_engine ────────────────────────────────────
 

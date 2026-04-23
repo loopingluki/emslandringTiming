@@ -154,14 +154,50 @@ async def add_health_record(recorded_at: int, noise: int, loop_signal: int) -> N
         await db.commit()
 
 
-async def get_health_history(limit: int = 500) -> list[dict]:
+async def get_health_history(since_unix: int | None = None,
+                             max_points: int = 1000) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if since_unix:
+            async with db.execute(
+                "SELECT COUNT(*) FROM decoder_health WHERE recorded_at >= ?",
+                (since_unix,)
+            ) as cur:
+                total = (await cur.fetchone())[0]
+            interval = max(1, total // max_points)
+            async with db.execute(
+                """SELECT id, recorded_at, noise, loop_signal,
+                          ROW_NUMBER() OVER (ORDER BY recorded_at) as rn
+                   FROM decoder_health WHERE recorded_at >= ?""",
+                (since_unix,)
+            ) as cur:
+                rows = await cur.fetchall()
+            return [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+        else:
+            async with db.execute(
+                "SELECT * FROM decoder_health ORDER BY recorded_at DESC LIMIT ?",
+                (max_points,)
+            ) as cur:
+                rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_transponders_per_run(run_ids: list[int]) -> dict[int, list[int]]:
+    if not run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in run_ids)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM decoder_health ORDER BY recorded_at DESC LIMIT ?", (limit,)
+            f"SELECT DISTINCT run_id, transponder_id FROM passings "
+            f"WHERE run_id IN ({placeholders})",
+            run_ids,
         ) as cur:
             rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    result: dict[int, list[int]] = {}
+    for r in rows:
+        result.setdefault(r["run_id"], []).append(r["transponder_id"])
+    return result
 
 
 async def get_transponder_stats() -> list[dict]:
@@ -184,15 +220,81 @@ async def get_transponder_stats() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_transponder_strength_history(transponder_id: int,
-                                           limit: int = 300) -> list[dict]:
+async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | None = None,
+                              limit_per_kart: int = 1) -> list[dict]:
+    """Beste Rundenzeit pro Kart (Transponder) seit since_unix.
+    Optional gefiltert auf eine Liste Transponder-IDs (für Klassen-Filter).
+    Rückgabe: [{transponder_id, kart_nr, lap_time_us, timestamp_us, run_date, run_started_at}]
+    """
+    q = """
+      SELECT p.transponder_id, p.kart_nr, p.lap_time_us, p.timestamp_us,
+             r.date AS run_date, r.started_at AS run_started_at, p.id AS pid
+      FROM passings p
+      JOIN runs r ON p.run_id = r.id
+      WHERE p.lap_time_us IS NOT NULL
+        AND r.started_at >= ?
+    """
+    params: list = [since_unix]
+    if transponder_ids:
+        placeholders = ",".join("?" for _ in transponder_ids)
+        q += f" AND p.transponder_id IN ({placeholders})"
+        params.extend(transponder_ids)
+    q += " ORDER BY p.lap_time_us ASC"
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT timestamp_us, strength, hits FROM passings"
-            " WHERE transponder_id = ?"
-            " ORDER BY timestamp_us DESC LIMIT ?",
-            (transponder_id, limit),
-        ) as cur:
+        async with db.execute(q, params) as cur:
             rows = await cur.fetchall()
+
+    best: dict[int, list[dict]] = {}
+    for r in rows:
+        tid = r["transponder_id"]
+        lst = best.setdefault(tid, [])
+        if len(lst) < limit_per_kart:
+            lst.append(dict(r))
+    result = [d for lst in best.values() for d in lst]
+    result.sort(key=lambda d: d["lap_time_us"])
+    return result
+
+
+async def delete_passing(passing_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM passings WHERE id = ?", (passing_id,))
+        await db.commit()
+
+
+async def get_transponder_strength_history(transponder_id: int,
+                                           since_unix: int | None = None,
+                                           max_points: int = 1000) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if since_unix:
+            # Join with runs to filter by real-world time (started_at is Unix timestamp)
+            async with db.execute(
+                """SELECT COUNT(*) FROM passings p
+                   JOIN runs r ON p.run_id = r.id
+                   WHERE p.transponder_id = ? AND r.started_at >= ?""",
+                (transponder_id, since_unix)
+            ) as cur:
+                total = (await cur.fetchone())[0]
+            interval = max(1, total // max_points)
+            async with db.execute(
+                """SELECT p.timestamp_us, p.strength, p.hits, r.started_at,
+                          ROW_NUMBER() OVER (ORDER BY p.id) as rn
+                   FROM passings p
+                   JOIN runs r ON p.run_id = r.id
+                   WHERE p.transponder_id = ? AND r.started_at >= ?
+                   ORDER BY p.id""",
+                (transponder_id, since_unix)
+            ) as cur:
+                rows = await cur.fetchall()
+            return [dict(r) for r in rows if r["rn"] % interval == 0 or r["rn"] == 1]
+        else:
+            async with db.execute(
+                "SELECT timestamp_us, strength, hits FROM passings"
+                " WHERE transponder_id = ?"
+                " ORDER BY id DESC LIMIT ?",
+                (transponder_id, max_points),
+            ) as cur:
+                rows = await cur.fetchall()
     return [dict(r) for r in rows]

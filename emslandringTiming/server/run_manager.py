@@ -15,7 +15,23 @@ async def ensure_today_runs() -> None:
 
 
 async def get_runs(date_str: str) -> list[dict]:
-    return await database.get_runs_for_date(date_str)
+    # Automatisch Läufe anlegen falls neuer Tag (Server lief über Mitternacht)
+    if date_str == _date.today().isoformat():
+        await ensure_today_runs()
+    runs = await database.get_runs_for_date(date_str)
+    # Klassen pro Lauf anreichern (für Sidebar-Farbcodierung)
+    transponders = cfg.get()["transponders"]
+    run_ids = [r["id"] for r in runs]
+    classes_by_run = await database.get_transponders_per_run(run_ids) if run_ids else {}
+    for r in runs:
+        tids = classes_by_run.get(r["id"], [])
+        classes = set()
+        for tid in tids:
+            info = transponders.get(str(tid))
+            if info:
+                classes.add(info.get("class"))
+        r["classes_raced"] = sorted(classes)
+    return runs
 
 
 async def add_run(date_str: str) -> dict:

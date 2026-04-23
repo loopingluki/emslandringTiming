@@ -16,28 +16,30 @@
       <div class="dot"></div>
       <span id="decoder-text">VERBINDE...</span>
       <span id="decoder-noise" style="margin-left:4px;"></span>
-      <span id="decoder-loop" style="margin-left:4px;"></span>
+      <span id="decoder-loop"  style="margin-left:4px;"></span>
     </div>
     <div class="header-spacer"></div>
     <div id="nav-tabs">
-      <button data-view="timing" class="active">Timing</button>
+      <button data-view="timing"       class="active">Timing</button>
+      <button data-view="rankings">Rankings</button>
       <button data-view="settings">Einstellungen</button>
       <button data-view="transponders">Transponder</button>
+      <button data-view="debug">Debug</button>
     </div>
   </header>
 
   <!-- ── Content ── -->
   <div id="content">
 
-    <!-- ── Timing View ── -->
+    <!-- ══ Timing View ══ -->
     <div id="view-timing" class="view active">
 
       <!-- Sidebar -->
       <aside id="sidebar">
         <div id="sidebar-header">
-          <button id="day-prev">‹</button>
-          <span id="day-label">–</span>
-          <button id="day-next">›</button>
+          <button id="day-prev" title="Vorheriger Tag">‹</button>
+          <input type="date" id="day-picker">
+          <button id="day-next" title="Nächster Tag">›</button>
         </div>
         <div id="run-list"></div>
         <div id="run-list-footer">
@@ -55,13 +57,24 @@
           <span id="run-status-text"></span>
           <div class="header-spacer"></div>
           <div id="run-timer">--:--</div>
+          <div id="run-finish-timer" style="display:none">
+            <span id="run-finish-label">Warte auf Karts</span>
+            <span id="run-finish-value">--:--</span>
+          </div>
           <div id="run-controls">
+            <button id="btn-print"  class="btn"          style="display:none">🖨 Drucken</button>
             <button id="btn-arm"    class="btn btn-green" disabled>▶ Scharf</button>
-            <button id="btn-start"  class="btn btn-green" style="display:none">▶ Start</button>
+            <button id="btn-disarm" class="btn btn-yellow" style="display:none">◀ Unscharf</button>
+            <button id="btn-start"  class="btn btn-green"  style="display:none">▶ Rennen starten</button>
             <button id="btn-pause"  class="btn btn-yellow" disabled>⏸ Pause</button>
             <button id="btn-resume" class="btn btn-green"  style="display:none">▶ Weiter</button>
             <button id="btn-abort"  class="btn btn-red"    disabled>⏹ Beenden</button>
           </div>
+        </div>
+
+        <!-- Laufzeit-Fortschrittsbalken -->
+        <div id="run-progress-wrap">
+          <div id="run-progress-bar"></div>
         </div>
 
         <!-- Kart Table -->
@@ -77,10 +90,10 @@
                 <th style="width:46px" class="num">Kart</th>
                 <th>Name</th>
                 <th style="width:40px" class="num">Rdn</th>
-                <th style="width:72px" class="num">Beste</th>
-                <th style="width:72px" class="num">Letzte</th>
-                <th style="width:72px" class="num">Ø5</th>
-                <th style="width:26px" class="num">→</th>
+                <th style="width:74px" class="num">Beste</th>
+                <th style="width:74px" class="num">Letzte</th>
+                <th style="width:74px" class="num">Ø5</th>
+                <th style="width:26px" class="num">↗</th>
                 <th style="width:80px">Prog</th>
                 <th style="width:44px" class="num">Sig</th>
               </tr>
@@ -91,22 +104,30 @@
       </div>
     </div>
 
-    <!-- ── Settings View ── -->
+    <!-- ══ Settings View ══ -->
     <div id="view-settings" class="view">
       <div class="settings-section">
-        <h3>Läufe & Zeiten</h3>
+        <h3>Läufe &amp; Zeiten</h3>
         <div class="settings-grid">
           <div class="form-group">
             <label>Läufe pro Tag</label>
             <input type="number" id="s-runs-per-day" min="1" max="50">
           </div>
-          <div class="form-group">
-            <label>Training Standardzeit (Sek)</label>
-            <input type="number" id="s-training-duration" min="30">
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Training Standardzeit</label>
+            <div class="form-row">
+              <div class="form-group"><label>Stunden</label><input type="number" id="s-train-h" min="0" max="9" value="0"></div>
+              <div class="form-group"><label>Minuten</label><input type="number" id="s-train-m" min="0" max="59" value="7"></div>
+              <div class="form-group"><label>Sekunden</label><input type="number" id="s-train-s" min="0" max="59" value="0"></div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Grand Prix Zeit (Sek)</label>
-            <input type="number" id="s-gp-time-duration" min="30">
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Grand Prix Standardzeit</label>
+            <div class="form-row">
+              <div class="form-group"><label>Stunden</label><input type="number" id="s-gp-h" min="0" max="9" value="0"></div>
+              <div class="form-group"><label>Minuten</label><input type="number" id="s-gp-m" min="0" max="59" value="12"></div>
+              <div class="form-group"><label>Sekunden</label><input type="number" id="s-gp-s" min="0" max="59" value="0"></div>
+            </div>
           </div>
           <div class="form-group">
             <label>Grand Prix Runden</label>
@@ -123,8 +144,41 @@
         </div>
       </div>
       <div class="settings-section">
-        <h3>Hardware / Netzwerk</h3>
+        <h3>Darstellung</h3>
         <div class="settings-grid">
+          <div class="form-group">
+            <label>Theme</label>
+            <select id="s-theme">
+              <option value="dark">Dunkel (Standard)</option>
+              <option value="contrast-dark">Kontrast Dunkel</option>
+              <option value="racing-orange">Racing Orange</option>
+              <option value="racing-red">Racing Rot (RennKart)</option>
+              <option value="pitwall">Pit-Wall Schwarz/Gelb</option>
+              <option value="light">Hell Klar</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Schriftgröße (%)</label>
+            <div class="spinner-row">
+              <button class="spinner-btn" data-target="s-zoom" data-delta="-10">−</button>
+              <input type="number" id="s-zoom" min="60" max="200" step="5" value="100">
+              <button class="spinner-btn" data-target="s-zoom" data-delta="10">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>
+          Hardware / Netzwerk
+          <span style="float:right">
+            <button class="btn btn-sm" id="btn-unlock-hw" style="font-size:10px">🔒 Entsperren</button>
+          </span>
+        </h3>
+        <p style="font-size:11px;color:var(--yellow);margin-bottom:10px">
+          ⚠ Kritische Einstellungen – nur ändern wenn du sicher bist, was du tust.
+        </p>
+        <div class="settings-grid" id="hw-settings-grid">
           <div class="form-group">
             <label>Decoder IP</label>
             <input type="text" id="s-decoder-ip">
@@ -147,40 +201,156 @@
           </div>
         </div>
       </div>
+
+      <div class="settings-section">
+        <h3>Drucker</h3>
+        <div class="settings-grid">
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>Ausgabedrucker</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <select id="s-printer" style="flex:1"></select>
+              <button class="btn" id="btn-printer-refresh" title="Drucker neu suchen">⟳</button>
+            </div>
+            <small style="color:var(--text-muted)">Lokale USB/CUPS-Drucker werden automatisch erkannt. Netzwerkdrucker unten hinzufügen.</small>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>Netzwerkdrucker (je Zeile ein IP:Port oder Hostname)</label>
+            <textarea id="s-network-printers" rows="3" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>Logo für Ausdruck (PNG)</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <img id="logo-preview" src="/api/logo" alt=""
+                   style="height:40px;max-width:180px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:2px;object-fit:contain"
+                   onerror="this.style.display='none'">
+              <input type="file" id="logo-file" accept="image/png" style="display:none">
+              <button class="btn" id="btn-logo-upload">Hochladen…</button>
+              <button class="btn btn-red" id="btn-logo-delete">Entfernen</button>
+            </div>
+            <small style="color:var(--text-muted)">Empfohlene Größe: ca. <b>600 × 240 px</b> (Querformat). Wird proportional auf 70 × 22 mm skaliert. Maximal 2 MB.</small>
+          </div>
+        </div>
+      </div>
+
       <div style="margin-top:4px">
         <button class="btn btn-green" id="btn-save-settings">Einstellungen speichern</button>
         <span id="settings-saved" style="margin-left:10px;font-size:11px;color:var(--green);display:none">✓ Gespeichert</span>
       </div>
     </div>
 
-    <!-- ── Transponders View ── -->
-    <div id="view-transponders" class="view" style="flex-direction:column">
-      <div style="padding:20px;overflow-y:auto;width:100%">
-        <div class="settings-section" style="max-width:900px">
-          <h3>Transponder / Karts</h3>
-          <table id="transponder-table">
-            <thead>
-              <tr>
-                <th>Kart</th>
-                <th>Name</th>
-                <th>Klasse</th>
-                <th>Transponder-ID</th>
-                <th class="num">Passings</th>
-                <th class="num">Laufzeit ges.</th>
-                <th class="num">Ø Stärke</th>
-                <th style="width:100px">Stärke-Verlauf</th>
-              </tr>
-            </thead>
-            <tbody id="transponder-tbody"></tbody>
-          </table>
-        </div>
-        <div class="settings-section" style="max-width:900px;margin-top:16px">
-          <h3>Decoder Gesundheit (Rauschen &amp; Loop-Signal)</h3>
-          <canvas id="health-chart" width="800" height="160"
-                  style="width:100%;height:160px;display:block"></canvas>
-          <p style="font-size:10px;color:var(--text-muted);margin-top:4px">
-            Grün = Loop-Signal · Gelb = Rauschen · Letzte 500 Messungen
+    <!-- ══ Transponders View ══ -->
+    <div id="view-transponders" class="view" style="flex-direction:column;overflow:hidden">
+      <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:13px;font-weight:600;color:var(--white)">Transponder &amp; Karts</span>
+        <div class="header-spacer"></div>
+        <button class="btn btn-green" id="btn-add-transponder">+ Transponder</button>
+        <button class="btn" id="btn-manage-classes" style="font-size:11px">⚙ Klassen</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:0 20px 20px">
+        <table id="transponder-table">
+          <thead>
+            <tr>
+              <th style="width:46px">Kart</th>
+              <th>Name</th>
+              <th style="width:90px">Klasse</th>
+              <th style="width:110px">Transponder-ID</th>
+              <th style="width:70px" class="num">Passings</th>
+              <th style="width:100px" class="num">Laufzeit ges.</th>
+              <th style="width:70px" class="num">Ø Stärke</th>
+              <th style="width:120px">Stärke-Verlauf</th>
+              <th style="width:30px"></th>
+            </tr>
+          </thead>
+          <tbody id="transponder-tbody"></tbody>
+        </table>
+
+        <div class="settings-section" style="margin-top:20px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <h3 style="margin-bottom:0">Decoder Gesundheit (Rauschen &amp; Loop-Signal)</h3>
+            <div class="header-spacer"></div>
+            <div class="range-pills" id="health-range-pills">
+              <button class="range-pill active" data-days="0">Letzte 1000</button>
+              <button class="range-pill" data-days="7">7 Tage</button>
+              <button class="range-pill" data-days="30">30 Tage</button>
+              <button class="range-pill" data-days="90">90 Tage</button>
+              <button class="range-pill" data-days="365">1 Jahr</button>
+            </div>
+          </div>
+          <div style="position:relative">
+            <canvas id="health-chart" width="1200" height="180"
+                    style="width:100%;height:180px;display:block"></canvas>
+            <div id="health-tooltip" class="chart-tooltip" style="display:none"></div>
+          </div>
+          <p style="font-size:10px;color:var(--text-muted);margin-top:6px">
+            <span style="color:var(--green)">●</span> Loop-Signal &nbsp;
+            <span style="color:var(--yellow)">●</span> Rauschen &nbsp;
+            Schwellwerte: Rauschen 40/80, Loop 50/100
           </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ Rankings View ══ -->
+    <div id="view-rankings" class="view" style="flex-direction:column;overflow:hidden">
+      <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600;color:var(--white)">Bestenliste</span>
+        <div class="header-spacer"></div>
+        <label style="font-size:11px;color:var(--text-dim)">Klasse
+          <select id="rk-class" style="margin-left:6px"></select>
+        </label>
+        <label style="font-size:11px;color:var(--text-dim)">Zeitraum
+          <select id="rk-period" style="margin-left:6px">
+            <option value="day">Tag</option>
+            <option value="week">Woche</option>
+            <option value="month" selected>Monat</option>
+            <option value="year">Jahr</option>
+          </select>
+        </label>
+        <button class="btn btn-sm" id="btn-rk-refresh">⟳ Neu laden</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:10px 20px">
+        <table id="rk-table" style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-dim);text-align:left">
+              <th style="padding:6px 8px;width:40px">#</th>
+              <th style="padding:6px 8px">Kart</th>
+              <th style="padding:6px 8px">Klasse</th>
+              <th style="padding:6px 8px;text-align:right">Rundenzeit</th>
+              <th style="padding:6px 8px">Datum</th>
+              <th style="padding:6px 8px;width:90px;text-align:right">Aktion</th>
+            </tr>
+          </thead>
+          <tbody id="rk-tbody"></tbody>
+        </table>
+        <div id="rk-empty" style="padding:30px;text-align:center;color:var(--text-muted);display:none">
+          Keine Einträge für die Auswahl.
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ Debug View ══ -->
+    <div id="view-debug" class="view" style="flex-direction:column;overflow:hidden">
+      <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:13px;font-weight:600;color:var(--white)">Debug</span>
+        <div class="header-spacer"></div>
+        <button class="btn btn-sm" id="btn-debug-clear">Löschen</button>
+        <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="debug-pause"> Pausiert
+        </label>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden">
+        <div class="debug-panel">
+          <div class="debug-panel-header">
+            📡 Decoder Rohdaten
+            <label style="margin-left:auto;font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;font-weight:normal">
+              <input type="checkbox" id="debug-show-heartbeat"> Heartbeats anzeigen
+            </label>
+          </div>
+          <div class="debug-log" id="debug-decoder-log"></div>
+        </div>
+        <div class="debug-panel" style="border-left:1px solid var(--border)">
+          <div class="debug-panel-header">📤 Zeittafel Emulator (Kloft)</div>
+          <div class="debug-log" id="debug-emulator-log"></div>
         </div>
       </div>
     </div>
@@ -188,11 +358,33 @@
   </div><!-- /content -->
 </div><!-- /app -->
 
+<!-- ── Floating Timer ── -->
+<div id="float-timer" style="display:none">
+  <div id="float-timer-ring"></div>
+  <div id="float-timer-inner">
+    <div id="float-timer-label">–</div>
+    <div id="float-timer-value">--:--</div>
+    <div id="float-timer-status"></div>
+  </div>
+</div>
+
+<!-- ── Client Status Bar ── -->
+<div id="client-bar">
+  <span id="client-bar-text">
+    WebSocket:
+    <span id="client-count-app">0</span>× Timing-UI &nbsp;·&nbsp;
+    <span id="client-count-dashboard">0</span>× Dashboard &nbsp;·&nbsp;
+    <span id="client-count-total">0</span> gesamt
+  </span>
+</div>
+
 <!-- ── Context Menu ── -->
 <div id="ctx-menu">
   <div class="ctx-item" id="ctx-settings">⚙ Lauf-Einstellungen</div>
   <div class="ctx-separator"></div>
-  <div class="ctx-item" id="ctx-kart-name">✏ Kart-Name ändern</div>
+  <div class="ctx-item" id="ctx-kart-name">✏ Kart-Namen anpassen</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item" id="ctx-skip" style="color:var(--text-dim)">⏭ Lauf überspringen</div>
 </div>
 
 <!-- ── Modal Overlay ── -->
@@ -214,19 +406,31 @@
       </select>
     </div>
     <div id="ms-duration-group" class="form-group">
-      <label>Zeit (Sekunden)</label>
+      <label>Laufzeit</label>
       <div class="form-row">
         <div class="form-group">
           <label>Stunden</label>
-          <input type="number" id="ms-hours" min="0" max="9" value="0">
+          <div class="spinner-row">
+            <button class="spinner-btn" data-target="ms-hours" data-delta="-1">−</button>
+            <input type="number" id="ms-hours"   min="0" max="9"  value="0">
+            <button class="spinner-btn" data-target="ms-hours" data-delta="1">+</button>
+          </div>
         </div>
         <div class="form-group">
           <label>Minuten</label>
-          <input type="number" id="ms-minutes" min="0" max="59" value="7">
+          <div class="spinner-row">
+            <button class="spinner-btn" data-target="ms-minutes" data-delta="-1">−</button>
+            <input type="number" id="ms-minutes" min="0" max="59" value="7">
+            <button class="spinner-btn" data-target="ms-minutes" data-delta="1">+</button>
+          </div>
         </div>
         <div class="form-group">
           <label>Sekunden</label>
-          <input type="number" id="ms-seconds" min="0" max="59" value="0">
+          <div class="spinner-row">
+            <button class="spinner-btn" data-target="ms-seconds" data-delta="-1">−</button>
+            <input type="number" id="ms-seconds" min="0" max="59" value="0">
+            <button class="spinner-btn" data-target="ms-seconds" data-delta="1">+</button>
+          </div>
         </div>
       </div>
     </div>
@@ -241,15 +445,135 @@
   </div>
 
   <!-- Kart Name Modal -->
-  <div class="modal" id="modal-kart-name" style="display:none">
-    <h2>Kart-Name ändern</h2>
-    <div id="kart-name-list"></div>
+  <div class="modal" id="modal-kart-name" style="display:none;max-width:560px;width:95%">
+    <h2>Kart-Namen für diesen Lauf</h2>
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+      Leer lassen = Standard-Name aus Transponder-Einstellungen
+    </p>
+    <div id="kart-name-list" style="max-height:380px;overflow-y:auto"></div>
     <div class="modal-footer">
-      <button class="btn btn-sm" id="kn-close">Schließen</button>
+      <button class="btn btn-sm" id="kn-cancel">Abbrechen</button>
+      <button class="btn btn-sm btn-green" id="kn-save">Speichern</button>
     </div>
   </div>
 
-</div>
+  <!-- Transponder Detail Modal -->
+  <div class="modal" id="modal-transponder" style="display:none;max-width:720px;width:95%">
+    <h2 id="td-title">Transponder bearbeiten</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Transponder-ID</label>
+        <input type="number" id="td-id" placeholder="z.B. 8534580">
+      </div>
+      <div class="form-group">
+        <label>Kart-Nummer</label>
+        <input type="number" id="td-kart-nr" min="1">
+      </div>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="td-name">
+      </div>
+      <div class="form-group">
+        <label>Klasse</label>
+        <select id="td-class"></select>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Laufzeit-Offset (manuelle Korrektur)</label>
+        <div class="form-row">
+          <div class="form-group"><label>Stunden</label><input type="number" id="td-offset-h" min="0" value="0"></div>
+          <div class="form-group"><label>Minuten</label><input type="number" id="td-offset-m" min="0" max="59" value="0"></div>
+          <div class="form-group"><label>Sekunden</label><input type="number" id="td-offset-s" min="0" max="59" value="0"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <label style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim)">Signalstärke-Verlauf</label>
+        <div class="header-spacer"></div>
+        <div class="range-pills" id="td-range-pills">
+          <button class="range-pill active" data-days="0">Letzte 1000</button>
+          <button class="range-pill" data-days="7">7 Tage</button>
+          <button class="range-pill" data-days="30">30 Tage</button>
+          <button class="range-pill" data-days="90">90 Tage</button>
+          <button class="range-pill" data-days="365">1 Jahr</button>
+          <button class="range-pill" data-days="730">2 Jahre</button>
+        </div>
+      </div>
+      <div style="position:relative">
+        <canvas id="td-strength-chart" width="640" height="160"
+                style="width:100%;height:160px;display:block;background:var(--bg);border-radius:4px"></canvas>
+        <div id="td-chart-tooltip" class="chart-tooltip" style="display:none"></div>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-sm btn-red" id="td-delete">🗑 Löschen</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" id="td-cancel">Abbrechen</button>
+        <button class="btn btn-sm btn-green" id="td-save">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Transponder Modal -->
+  <div class="modal" id="modal-add-transponder" style="display:none">
+    <h2>Transponder hinzufügen</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Transponder-ID *</label>
+        <input type="number" id="at-id" placeholder="z.B. 12345678">
+      </div>
+      <div class="form-group">
+        <label>Kart-Nummer *</label>
+        <input type="number" id="at-kart-nr" min="1">
+      </div>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="at-name" placeholder="Kart XX">
+      </div>
+      <div class="form-group">
+        <label>Klasse</label>
+        <select id="at-class"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="at-cancel">Abbrechen</button>
+      <button class="btn btn-sm btn-green" id="at-save">Hinzufügen</button>
+    </div>
+  </div>
+
+  <!-- Print Modal -->
+  <div class="modal" id="modal-print" style="display:none;max-width:480px">
+    <h2>Drucken</h2>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Wählen Sie, was gedruckt werden soll:
+    </p>
+    <div id="print-options" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="print-close">Schließen</button>
+    </div>
+  </div>
+
+  <!-- Class Management Modal -->
+  <div class="modal" id="modal-classes" style="display:none;max-width:480px">
+    <h2>Klassen verwalten</h2>
+    <div id="class-list" style="margin-bottom:12px;max-height:300px;overflow-y:auto"></div>
+    <div style="display:flex;gap:8px;align-items:flex-end;padding-top:8px;border-top:1px solid var(--border)">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label>Name</label>
+        <input type="text" id="new-class-name" placeholder="z.B. Bambini">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Farbe</label>
+        <input type="color" id="new-class-color" value="#888888" style="height:36px;width:50px;padding:2px;border-radius:4px;border:1px solid var(--border);background:var(--bg);cursor:pointer">
+      </div>
+      <button class="btn btn-sm btn-green" id="btn-add-class" style="flex-shrink:0">+ Hinzufügen</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm btn-green" id="cls-close">Schließen</button>
+    </div>
+  </div>
+
+</div><!-- /modal-overlay -->
 
 <script src="/static/app.js"></script>
 </body>

@@ -5,7 +5,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 
-RECONNECT_DELAY = 3.0
+RECONNECT_DELAY    = 3.0
+HEARTBEAT_TIMEOUT  = 15.0   # Sekunden ohne Heartbeat → Verbindung als tot werten
 
 
 def descape(data: bytes) -> bytes:
@@ -100,11 +101,17 @@ class Decoder:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(self.ip, self.port), timeout=10.0
         )
-        self.connected = True
+        # connected bleibt False bis zum ersten echten Heartbeat
         buffer = b""
         try:
             while True:
-                chunk = await reader.read(4096)
+                try:
+                    chunk = await asyncio.wait_for(
+                        reader.read(4096), timeout=HEARTBEAT_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    # Kein Heartbeat innerhalb der Frist → Decoder schweigt → trennen
+                    break
                 if not chunk:
                     break
                 buffer += chunk
@@ -138,7 +145,10 @@ class Decoder:
 
                     if parsed["type"] == "HEARTBEAT":
                         self.noise = parsed["noise"]
-                        self.loop = parsed["loop"]
+                        self.loop  = parsed["loop"]
+                        # Erst beim ersten Heartbeat als "verbunden" markieren
+                        if not self.connected:
+                            self.connected = True
                         if self._on_heartbeat:
                             await self._on_heartbeat(
                                 connected=True,

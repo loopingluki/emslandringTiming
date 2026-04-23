@@ -79,6 +79,7 @@ class KartState:
             "last_passing_ts": self.last_passing_ts,
             "strength": self.strength,
             "lap_times_us": self.lap_times_us,
+            "seen_after_finish": self.seen_after_finish,
         }
 
 
@@ -100,7 +101,14 @@ class RaceEngine:
         self._timer_task: asyncio.Task | None = None
         self._finish_task: asyncio.Task | None = None
         self._finish_start: float = 0.0
+        self._finish_wait_total: int = 0
         self._finish_phase: str = ""   # "waiting_leader" | "waiting_others"
+
+    def _finish_remaining(self) -> int:
+        if self.status != "finishing" or not self._finish_wait_total:
+            return 0
+        elapsed = time.time() - self._finish_start
+        return max(0, int(self._finish_wait_total - elapsed))
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -110,8 +118,16 @@ class RaceEngine:
         run = await database.get_run(run_id)
         if not run:
             raise ValueError(f"Lauf {run_id} nicht gefunden")
-        if run["status"] == "done":
+        if run["status"] in ("done", "skipped"):
             raise ValueError("Lauf ist bereits beendet")
+
+        # Sequenzprüfung: alle früheren Läufe des selben Tages müssen done/skipped sein
+        runs_today = await database.get_runs_for_date(run["date"])
+        for r in runs_today:
+            if r["run_number"] < run["run_number"] and r["status"] not in ("done", "skipped"):
+                raise ValueError(
+                    f"Lauf {r['name']} muss zuerst abgeschlossen oder übersprungen werden"
+                )
 
         await self._cancel_tasks()
         self.run_id = run_id
@@ -126,6 +142,19 @@ class RaceEngine:
         self.status = "armed"
         await database.update_run(run_id, status="armed")
         await self._broadcast_run_state()
+        await self._broadcast_run_list_update()
+
+    async def disarm(self) -> None:
+        if self.status != "armed":
+            raise ValueError("Lauf ist nicht scharf geschaltet")
+        old_run_id = self.run_id
+        await self._cancel_tasks()
+        self.run_id = None
+        self.run = None
+        self.status = "none"
+        self.karts = {}
+        await database.update_run(old_run_id, status="pending")
+        await hub.broadcast({"type": "run_state", "status": "none"})
         await self._broadcast_run_list_update()
 
     async def start_gp(self) -> None:
@@ -218,6 +247,10 @@ class RaceEngine:
                 kart_nr, kart.best_us, kart.laps, lap_us
             )
 
+        # Finish-Flag VOR Broadcast setzen, damit das Kart sofort als „fertig“ im UI erscheint
+        if self.status == "finishing":
+            kart.seen_after_finish = True
+
         # Broadcast: einzelnes Passing + aktualisierte Tabelle
         sorted_karts = self._sorted_karts()
         position = next(
@@ -246,9 +279,8 @@ class RaceEngine:
             if leader and leader.laps >= (self.run.get("gp_laps") or cfg.get()["gp_laps_count"]):
                 await self._trigger_finishing()
 
-        # Finish-Logik: Karts nach Ablauf abhaken
+        # Finish-Logik: Übergänge prüfen (Flag ist oben schon gesetzt)
         if self.status == "finishing":
-            kart.seen_after_finish = True
             if self._finish_phase == "waiting_leader":
                 await self._check_leader_crossed()
             elif self._finish_phase == "waiting_others":
@@ -309,6 +341,7 @@ class RaceEngine:
                 k.seen_after_finish = False
             wait = cfg.get()["wait_time_gp_sec"]
 
+        self._finish_wait_total = wait
         await self._broadcast_run_state()
         self._finish_task = asyncio.create_task(
             self._finish_timeout(wait), name="finish_timeout"
@@ -326,11 +359,13 @@ class RaceEngine:
             for k in self.karts.values():
                 k.seen_after_finish = False
             leader.seen_after_finish = True  # Führender gilt als schon gesehen
-            await self._broadcast_run_state()
             # Timeout zurücksetzen
             if self._finish_task:
                 self._finish_task.cancel()
             wait = cfg.get()["wait_time_gp_sec"]
+            self._finish_start = time.time()
+            self._finish_wait_total = wait
+            await self._broadcast_run_state()
             self._finish_task = asyncio.create_task(
                 self._finish_timeout(wait), name="finish_timeout"
             )
@@ -341,7 +376,21 @@ class RaceEngine:
 
     async def _finish_timeout(self, wait_sec: int) -> None:
         try:
-            await asyncio.sleep(wait_sec)
+            end = time.time() + wait_sec
+            while True:
+                now = time.time()
+                if now >= end:
+                    break
+                await asyncio.sleep(1.0)
+                if self.status == "finishing":
+                    remaining = max(0, int(end - time.time()))
+                    await hub.broadcast({
+                        "type": "timer_tick",
+                        "remaining_sec": 0,
+                        "elapsed_sec": int(self.elapsed_sec),
+                        "finish_remaining_sec": remaining,
+                        "finish_phase": self._finish_phase,
+                    })
             if self.status == "finishing":
                 if self._finish_phase == "waiting_leader":
                     await emulator.session_finish()
@@ -360,10 +409,35 @@ class RaceEngine:
 
         now = time.time()
         self.status = "done"
-        await database.update_run(self.run_id, status="done", finished_at=now)
-        await hub.broadcast({"type": "run_finished", "run_id": self.run_id})
+        finished_run_id = self.run_id
+        await database.update_run(finished_run_id, status="done", finished_at=now)
+        await hub.broadcast({"type": "run_finished", "run_id": finished_run_id})
         await self._broadcast_run_state()
         await self._broadcast_run_list_update()
+
+        # Automatischer Ausdruck (im Hintergrund, blockiert Finalize nicht)
+        asyncio.create_task(self._auto_print(finished_run_id))
+
+    async def _auto_print(self, run_id: int) -> None:
+        try:
+            import printer
+            res = await printer.print_run(run_id)
+            if not res.get("ok"):
+                await hub.broadcast({
+                    "type": "print_error",
+                    "run_id": run_id,
+                    "error": res.get("error", "unbekannt"),
+                })
+            else:
+                await hub.broadcast({
+                    "type": "print_ok",
+                    "run_id": run_id,
+                    "printer": res.get("printer", ""),
+                })
+        except Exception as e:
+            await hub.broadcast({
+                "type": "print_error", "run_id": run_id, "error": str(e),
+            })
 
     def _sorted_karts(self) -> list[KartState]:
         mode = self.run["mode"] if self.run else "training"
@@ -401,12 +475,15 @@ class RaceEngine:
             "elapsed_sec": int(self.elapsed_sec),
             "timer_running": self.status == "running",
             "finish_phase": self._finish_phase,
+            "finish_remaining_sec": self._finish_remaining(),
+            "finish_wait_total": self._finish_wait_total,
         })
 
     async def _broadcast_run_list_update(self) -> None:
         from datetime import date
+        import run_manager
         today = date.today().isoformat()
-        runs = await database.get_runs_for_date(today)
+        runs = await run_manager.get_runs(today)
         await hub.broadcast({"type": "run_list", "runs": runs})
 
     async def _cancel_timer(self) -> None:
@@ -439,6 +516,8 @@ class RaceEngine:
                 "elapsed_sec": int(self.elapsed_sec),
                 "timer_running": self.status == "running",
                 "finish_phase": self._finish_phase,
+                "finish_remaining_sec": self._finish_remaining(),
+                "finish_wait_total": self._finish_wait_total,
             } if self.run else None,
             "karts": [k.to_dict(i + 1) for i, k in enumerate(sorted_karts)],
         }

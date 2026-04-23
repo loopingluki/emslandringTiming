@@ -17,6 +17,12 @@ _DEFAULTS: dict = {
     "wait_time_gp_sec": 120,
     "firebase_credentials": "",
     "printer": "default",
+    "classes": [
+        {"name": "Minikart",  "color": "#f9a800"},
+        {"name": "Leihkart",  "color": "#1565c0"},
+        {"name": "Rennkart",  "color": "#c62828"},
+        {"name": "Superkart", "color": "#757575"},
+    ],
     "transponders": {
         "8534580":  {"kart_nr": 1,  "name": "Kart 1",  "class": "Minikart"},
         "7203974":  {"kart_nr": 2,  "name": "Kart 2",  "class": "Minikart"},

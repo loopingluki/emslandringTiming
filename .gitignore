@@ -1,3 +1,6 @@
+emslandringTiming/.venv/
+emslandringTiming/emslandring.db
+emslandringTiming/server/data/timing.db
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -6,4 +9,5 @@ venv/
 .venv/
 *.log
 *.sqlite
+*.db
 Firebase Datenbank Schlüssel/
