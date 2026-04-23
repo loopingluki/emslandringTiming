@@ -6,7 +6,10 @@
 # =============================================================================
 set -e
 
-APP_DIR="$HOME/emslandringTiming"
+# Das GitHub-Repo hat emslandringTiming/ als Unterordner:
+#   repo root / emslandringTiming / server / main.py
+REPO_DIR="$HOME/emslandring-repo"
+APP_DIR="$REPO_DIR/emslandringTiming"
 VENV="$APP_DIR/.venv"
 SERVICE_NAME="emslandring-timing"
 
@@ -19,8 +22,6 @@ echo ""
 echo "→ Python-Version prüfen..."
 
 PYTHON_BIN=""
-
-# Erst schauen ob 3.11+ schon vorhanden
 for v in 3.12 3.11; do
     if command -v python${v} &>/dev/null; then
         PYTHON_BIN="python${v}"
@@ -28,7 +29,6 @@ for v in 3.12 3.11; do
     fi
 done
 
-# Falls nicht: deadsnakes PPA hinzufügen und Python 3.11 installieren
 if [ -z "$PYTHON_BIN" ]; then
     echo "→ Python 3.11 nicht gefunden – füge deadsnakes PPA hinzu..."
     sudo apt-get install -y software-properties-common -qq
@@ -56,20 +56,25 @@ echo "✓ System-Pakete installiert"
 # ── 3. Repository holen ───────────────────────────────────────────────────────
 echo ""
 echo "→ Repository klonen / aktualisieren..."
-if [ -d "$APP_DIR/.git" ]; then
-    cd "$APP_DIR"
+if [ -d "$REPO_DIR/.git" ]; then
+    cd "$REPO_DIR"
     git pull origin main
     echo "✓ Repository aktualisiert"
 else
-    git clone https://github.com/loopingluki/emslandringTiming.git "$APP_DIR"
-    echo "✓ Repository geklont nach $APP_DIR"
+    # Alten fehlgeschlagenen Clone-Versuch aufräumen falls vorhanden
+    rm -rf "$REPO_DIR"
+    git clone https://github.com/loopingluki/emslandringTiming.git "$REPO_DIR"
+    echo "✓ Repository geklont nach $REPO_DIR"
 fi
 
-cd "$APP_DIR"
+echo "✓ App-Verzeichnis: $APP_DIR"
+ls "$APP_DIR/requirements.txt" > /dev/null || { echo "FEHLER: requirements.txt nicht gefunden in $APP_DIR"; exit 1; }
 
 # ── 4. Virtuelle Umgebung ─────────────────────────────────────────────────────
 echo ""
 echo "→ Python Virtual Environment einrichten ($PYTHON_BIN)..."
+cd "$APP_DIR"
+
 if [ ! -d "$VENV" ]; then
     $PYTHON_BIN -m venv "$VENV"
 fi
@@ -80,7 +85,7 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 pip install weasyprint pypdf -q
 
-echo "✓ Python-Pakete installiert ($(pip show fastapi | grep Version))"
+echo "✓ Python-Pakete installiert"
 deactivate
 
 # ── 5. Datenverzeichnisse anlegen ─────────────────────────────────────────────
@@ -123,19 +128,30 @@ echo "→ Drucker-Berechtigung für User $USER..."
 sudo usermod -aG lpadmin "$USER" 2>/dev/null || true
 echo "✓ User zur lpadmin-Gruppe hinzugefügt"
 
-# ── 8. Fertig ─────────────────────────────────────────────────────────────────
+# ── 8. Alten fehlerhaften Clone aufräumen ─────────────────────────────────────
+if [ -d "$HOME/emslandringTiming" ] && [ ! -f "$HOME/emslandringTiming/requirements.txt" ]; then
+    echo "→ Alten fehlerhaften Clone entfernen (~./emslandringTiming)..."
+    rm -rf "$HOME/emslandringTiming"
+    echo "✓ Aufgeräumt"
+fi
+
+# ── 9. Fertig ─────────────────────────────────────────────────────────────────
+SERVER_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "======================================================"
 echo " Installation abgeschlossen!"
 echo "======================================================"
 echo ""
+echo "App-Verzeichnis : $APP_DIR"
+echo "Konfig-Datei    : $APP_DIR/config.json"
+echo ""
 echo "NÄCHSTE SCHRITTE:"
 echo ""
 echo "1. Firebase-Credentials kopieren (vom Mac aus):"
-echo "   scp service-account.json $USER@$(hostname -I | awk '{print $1}'):~/emslandringTiming/"
+echo "   scp service-account.json $USER@${SERVER_IP}:${APP_DIR}/"
 echo "   Dann in config.json eintragen:"
 echo "   nano $APP_DIR/config.json"
-echo '   → "firebase_credentials": "'$APP_DIR'/service-account.json"'
+echo "   → Zeile: \"firebase_credentials\": \"${APP_DIR}/service-account.json\""
 echo ""
 echo "2. Service starten:"
 echo "   sudo systemctl start $SERVICE_NAME"
@@ -144,15 +160,14 @@ echo "3. Logs live beobachten:"
 echo "   sudo journalctl -u $SERVICE_NAME -f"
 echo ""
 echo "4. Im Browser öffnen:"
-echo "   http://$(hostname -I | awk '{print $1}'):8080"
+echo "   http://${SERVER_IP}:8080"
 echo ""
-echo "Autostart-Test nach Reboot:"
-echo "   sudo reboot"
-echo "   # nach ~30s: sudo systemctl status $SERVICE_NAME"
+echo "Autostart bei Reboot: bereits aktiviert (systemctl enable)"
+echo "Test: sudo reboot  →  nach 30s: systemctl status $SERVICE_NAME"
 echo ""
 echo "Nützliche Befehle:"
-echo "  sudo systemctl status  $SERVICE_NAME   # Status anzeigen"
-echo "  sudo systemctl restart $SERVICE_NAME   # Neustart"
-echo "  sudo systemctl stop    $SERVICE_NAME   # Stoppen"
-echo "  sudo journalctl -u $SERVICE_NAME -f    # Live-Log"
+echo "  sudo systemctl status  $SERVICE_NAME"
+echo "  sudo systemctl restart $SERVICE_NAME"
+echo "  sudo systemctl stop    $SERVICE_NAME"
+echo "  sudo journalctl -u $SERVICE_NAME -f"
 echo ""
