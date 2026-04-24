@@ -107,13 +107,19 @@ class AmpelController:
             )
             writer.write(request)
             await writer.drain()
-            # HTTP/1.0: Server schließt nach Antwort → read() bis EOF
-            try:
-                data = await asyncio.wait_for(reader.read(-1), timeout=5.0)
-            except asyncio.TimeoutError:
-                self.last_err = "Timeout – keine vollständige Antwort"
-                writer.close()
-                return None
+            # Lesen in Chunks: Abbruch bei EOF, bei Stille >2s, oder wenn
+            # die komplette Antwort bereits empfangen wurde.
+            data = b""
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=2.0)
+                    if not chunk:
+                        break          # EOF – sauber fertig
+                    data += chunk
+                    if b"</response>" in data or b"</html>" in data:
+                        break          # Vollständige Antwort empfangen
+                except asyncio.TimeoutError:
+                    break              # Keine weiteren Daten → fertig
             writer.close()
             try:
                 await writer.wait_closed()
