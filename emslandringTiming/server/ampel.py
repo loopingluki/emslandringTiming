@@ -95,23 +95,26 @@ class AmpelController:
         aber auf curl-Requests korrekt. curl ist auf jedem Linux-System vorhanden.
         """
         url = f"http://{ip}:{port}{path}"
+        print(f"[ampel] curl -> {url}")
         try:
             proc = await asyncio.create_subprocess_exec(
                 "curl",
-                "-s",                         # silent
-                "--max-time", "5",            # 5s Gesamt-Timeout
+                "-sS",                        # silent, aber Errors zeigen
+                "--max-time", "5",
                 "-u", f"{username}:{password}",
                 url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=7.0)
+            out_txt = stdout.decode("utf-8", errors="replace")
+            err_txt = stderr.decode("utf-8", errors="replace").strip()
             if proc.returncode != 0:
-                err = stderr.decode("utf-8", errors="replace").strip()[:120]
-                self.last_err = f"curl exit={proc.returncode}: {err or 'kein stderr'}"
-                print(f"[ampel] curl exit={proc.returncode}: {err}")
+                detail = err_txt or out_txt[:120] or "keine Ausgabe"
+                self.last_err = f"curl exit={proc.returncode}: {detail}"
+                print(f"[ampel] curl exit={proc.returncode} stderr={err_txt!r} stdout={out_txt[:200]!r}")
                 return None
-            return stdout.decode("utf-8", errors="replace")
+            return out_txt
         except asyncio.TimeoutError:
             self.last_err = "curl-Timeout"
             print(f"[ampel] curl Timeout")
