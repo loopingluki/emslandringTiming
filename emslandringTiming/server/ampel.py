@@ -100,6 +100,7 @@ class AmpelController:
             proc = await asyncio.create_subprocess_exec(
                 "curl",
                 "-sS",                        # silent, aber Errors zeigen
+                "--http0.9",                  # Relay-Board spricht HTTP/0.9
                 "--max-time", "5",
                 "-u", f"{username}:{password}",
                 url,
