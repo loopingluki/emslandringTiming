@@ -24,9 +24,13 @@ Der Pfad zum Service-Account-JSON wird in config.json unter
 import threading
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import config as cfg
 import database
+
+# Lokale Zeitzone für Anzeige (Sommer-/Winterzeit automatisch)
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
 # firebase-admin ist optional – nur aktiv wenn installiert + konfiguriert
 try:
@@ -178,9 +182,9 @@ async def sync_run(run_id: int) -> bool:
     for nr in driven:
         cat_breakdown[_kart_category(nr)] += 1
 
-    # ── Zeitfelder ────────────────────────────────────────────────────────────
-    start_dt        = datetime.fromtimestamp(started_at,  tz=timezone.utc)
-    end_dt          = datetime.fromtimestamp(finished_at, tz=timezone.utc)
+    # ── Zeitfelder (lokale Zeit Europe/Berlin für Anzeige) ────────────────────
+    start_dt        = datetime.fromtimestamp(started_at,  tz=LOCAL_TZ)
+    end_dt          = datetime.fromtimestamp(finished_at, tz=LOCAL_TZ)
     duration_minutes = max(0, int((finished_at - started_at) / 60))
 
     mode       = "grandprix" if run["mode"] in ("gp_time", "gp_laps") else "training"
@@ -190,7 +194,10 @@ async def sync_run(run_id: int) -> bool:
     session_doc = {
         # Pflichtfelder – identisch zu mylaps_server.py (analyse.html)
         "group_name":         group_name,
-        "date":               run["date"],
+        # Datum aus tatsächlichem Start-Zeitstempel in lokaler Zone ableiten –
+        # so stimmt es auch bei Läufen kurz vor/nach Mitternacht, unabhängig
+        # davon welche Zeitzone der Server hat.
+        "date":               start_dt.strftime("%Y-%m-%d"),
         "start_time":         start_dt.strftime("%H:%M:%S"),
         "end_time":           end_dt.strftime("%H:%M:%S"),
         "duration_minutes":   duration_minutes,
