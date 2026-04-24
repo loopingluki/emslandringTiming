@@ -28,10 +28,9 @@ Ablauf-Sequenz (config.json):
   Werte: "none" | "off" | "green" | "red"
 """
 import asyncio
+import base64
 import re
 import time
-import urllib.request
-import urllib.error
 
 import config as cfg
 
@@ -86,32 +85,47 @@ class AmpelController:
         if state and state != "none":
             await self.send(state)
 
-    # ── HTTP via urllib (thread executor) ────────────────────────────────────
-
-    def _make_request(self, url: str, username: str, password: str) -> urllib.request.Request:
-        """Erstellt einen urllib.Request mit Basic Auth und Connection: close."""
-        import base64
-        req = urllib.request.Request(url)
-        creds = base64.b64encode(f"{username}:{password}".encode()).decode()
-        req.add_header("Authorization", f"Basic {creds}")
-        # Connection: close → Box schließt Verbindung nach Antwort (kein Timeout-Warten)
-        req.add_header("Connection", "close")
-        return req
+    # ── HTTP/1.0 raw asyncio ──────────────────────────────────────────────────
 
     async def _http_get(self, path: str, ip: str, port: int,
                          username: str, password: str) -> str | None:
-        """HTTP GET via urllib – handelt alle HTTP-Versionen und Encodings korrekt."""
-        url = f"http://{ip}:{port}{path}"
-        req = self._make_request(url, username, password)
-        loop = asyncio.get_running_loop()
+        """
+        HTTP/1.0 GET mit Basic Auth.
+        HTTP/1.0: Server schließt Verbindung nach Antwort (kein Keep-Alive).
+        → reader.read() liefert alles bis EOF, kein Timeout-Problem.
+        """
+        creds = base64.b64encode(f"{username}:{password}".encode()).decode()
+        request = (
+            f"GET {path} HTTP/1.0\r\n"
+            f"Host: {ip}\r\n"
+            f"Authorization: Basic {creds}\r\n"
+            f"\r\n"
+        ).encode()
         try:
-            def _fetch() -> str:
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    return resp.read().decode("utf-8", errors="replace")
-            return await loop.run_in_executor(None, _fetch)
-        except urllib.error.HTTPError as exc:
-            self.last_err = f"HTTP {exc.code} {exc.reason}"
-            print(f"[ampel] HTTP {path}: {exc.code} {exc.reason}")
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=5.0
+            )
+            writer.write(request)
+            await writer.drain()
+            # HTTP/1.0: Server schließt nach Antwort → read() bis EOF
+            try:
+                data = await asyncio.wait_for(reader.read(-1), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.last_err = "Timeout – keine vollständige Antwort"
+                writer.close()
+                return None
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            if not data:
+                self.last_err = "Leere Antwort vom Relaismodul"
+                return None
+            return data.decode("utf-8", errors="replace")
+        except asyncio.TimeoutError:
+            self.last_err = f"Verbindungs-Timeout ({ip}:{port})"
+            print(f"[ampel] Verbindungs-Timeout {ip}:{port}")
             return None
         except Exception as exc:
             self.last_err = str(exc)
@@ -138,7 +152,6 @@ class AmpelController:
         """Toggelt ein einzelnes Relais (io.cgi?relay=X)."""
         resp = await self._http_get(f"/io.cgi?relay={relay_idx}",
                                      ip, port, username, password)
-        # urllib wirft bei 4xx/5xx eine Exception → resp ist None bei Fehler
         return resp is not None
 
     async def _send_http(self, state: str, ip: str, port: int,
