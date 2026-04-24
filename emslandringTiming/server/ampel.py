@@ -148,8 +148,10 @@ class AmpelController:
         for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
             states[int(m.group(1))] = int(m.group(2))
         if not states:
-            self.last_err = "Kein Relay-XML in Antwort – falsche IP/Firmware?"
-            print(f"[ampel] status.xml: kein relay-XML gefunden. Antwort: {resp[:300]!r}")
+            # Rohdaten in Fehlermeldung anzeigen (erste 200 Zeichen, printable)
+            snippet = resp[:200].replace("\r", "\\r").replace("\n", "\\n")
+            self.last_err = f"Kein Relay-XML. Antwort: {snippet}"
+            print(f"[ampel] status.xml: kein relay-XML gefunden. Antwort: {resp[:500]!r}")
             return None
         return states
 
