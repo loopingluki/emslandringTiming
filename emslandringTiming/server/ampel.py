@@ -88,46 +88,56 @@ class AmpelController:
     # ── HTTP/1.0 raw asyncio ──────────────────────────────────────────────────
 
     async def _http_get(self, path: str, ip: str, port: int,
-                         username: str, password: str) -> str | None:
+                         username: str, password: str,
+                         attempts: int = 3) -> str | None:
         """
-        HTTP-GET via curl-Subprozess.
-        Das Relay-Board antwortet auf direkte asyncio/urllib-Requests mit Garbage,
-        aber auf curl-Requests korrekt. curl ist auf jedem Linux-System vorhanden.
+        HTTP-GET via curl-Subprozess (HTTP/0.9 support für Relay-Board).
+        Retry bei Timeout – das Board ist manchmal kurz unerreichbar nach
+        einem Toggle.
         """
         url = f"http://{ip}:{port}{path}"
-        print(f"[ampel] curl -> {url}")
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "curl",
-                "-sS",                        # silent, aber Errors zeigen
-                "--http0.9",                  # Relay-Board spricht HTTP/0.9
-                "--max-time", "5",
-                "-u", f"{username}:{password}",
-                url,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=7.0)
-            out_txt = stdout.decode("utf-8", errors="replace")
-            err_txt = stderr.decode("utf-8", errors="replace").strip()
-            if proc.returncode != 0:
+        for attempt in range(1, attempts + 1):
+            print(f"[ampel] curl -> {url} (Versuch {attempt}/{attempts})")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "curl",
+                    "-sS",
+                    "--http0.9",
+                    "--max-time", "8",
+                    "-u", f"{username}:{password}",
+                    url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+                out_txt = stdout.decode("utf-8", errors="replace")
+                err_txt = stderr.decode("utf-8", errors="replace").strip()
+                if proc.returncode == 0:
+                    return out_txt
+                # Retry bei Timeout (28) oder Connection refused (7)
+                if proc.returncode in (7, 28) and attempt < attempts:
+                    print(f"[ampel] curl exit={proc.returncode}, retry in 500ms")
+                    await asyncio.sleep(0.5)
+                    continue
                 detail = err_txt or out_txt[:120] or "keine Ausgabe"
                 self.last_err = f"curl exit={proc.returncode}: {detail}"
-                print(f"[ampel] curl exit={proc.returncode} stderr={err_txt!r} stdout={out_txt[:200]!r}")
+                print(f"[ampel] curl exit={proc.returncode} stderr={err_txt!r}")
                 return None
-            return out_txt
-        except asyncio.TimeoutError:
-            self.last_err = "curl-Timeout"
-            print(f"[ampel] curl Timeout")
-            return None
-        except FileNotFoundError:
-            self.last_err = "curl nicht installiert (apt install curl)"
-            print(f"[ampel] curl nicht gefunden")
-            return None
-        except Exception as exc:
-            self.last_err = str(exc)
-            print(f"[ampel] curl Fehler: {exc}")
-            return None
+            except asyncio.TimeoutError:
+                if attempt < attempts:
+                    print(f"[ampel] communicate() Timeout, retry")
+                    await asyncio.sleep(0.5)
+                    continue
+                self.last_err = "curl-Timeout (Prozess)"
+                return None
+            except FileNotFoundError:
+                self.last_err = "curl nicht installiert (apt install curl)"
+                return None
+            except Exception as exc:
+                self.last_err = str(exc)
+                print(f"[ampel] curl Fehler: {exc}")
+                return None
+        return None
 
     async def _get_relay_states(self, ip: str, port: int,
                                  username: str, password: str) -> dict[int, int] | None:
@@ -184,10 +194,14 @@ class AmpelController:
             print(f"[ampel] ✗ status.xml nicht lesbar")
             return False
 
-        # Nur toggeln wenn nötig
+        # Nur toggeln wenn nötig – mit kleiner Pause zwischen Requests
         ok = True
+        first = True
         for relay_idx, desired in want.items():
             if current.get(relay_idx, 0) != desired:
+                if not first:
+                    await asyncio.sleep(0.2)   # Pause zwischen Toggles
+                first = False
                 toggled = await self._toggle(relay_idx, ip, port, username, password)
                 if not toggled:
                     ok = False
