@@ -28,9 +28,10 @@ Ablauf-Sequenz (config.json):
   Werte: "none" | "off" | "green" | "red"
 """
 import asyncio
-import base64
 import re
 import time
+import urllib.request
+import urllib.error
 
 import config as cfg
 
@@ -85,76 +86,58 @@ class AmpelController:
         if state and state != "none":
             await self.send(state)
 
-    # ── HTTP Protokoll ────────────────────────────────────────────────────────
+    # ── HTTP via urllib (thread executor) ────────────────────────────────────
 
-    def _credentials(self, c: dict) -> str:
-        u = c.get("ampel_username", "admin")
-        p = c.get("ampel_password", "")
-        return base64.b64encode(f"{u}:{p}".encode()).decode()
+    def _make_request(self, url: str, username: str, password: str) -> urllib.request.Request:
+        """Erstellt einen urllib.Request mit Basic Auth."""
+        import base64
+        req = urllib.request.Request(url)
+        creds = base64.b64encode(f"{username}:{password}".encode()).decode()
+        req.add_header("Authorization", f"Basic {creds}")
+        return req
 
     async def _http_get(self, path: str, ip: str, port: int,
-                         creds: str) -> str | None:
-        request = (
-            f"GET {path} HTTP/1.1\r\n"
-            f"Host: {ip}\r\n"
-            f"Authorization: Basic {creds}\r\n"
-            f"Connection: close\r\n\r\n"
-        )
+                         username: str, password: str) -> str | None:
+        """HTTP GET via urllib – handelt alle HTTP-Versionen und Encodings korrekt."""
+        url = f"http://{ip}:{port}{path}"
+        req = self._make_request(url, username, password)
+        loop = asyncio.get_running_loop()
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port), timeout=3.0
-            )
-            writer.write(request.encode())
-            await writer.drain()
-            response = b""
-            try:
-                response = await asyncio.wait_for(reader.read(4096), timeout=3.0)
-            except asyncio.TimeoutError:
-                self.last_err = f"Timeout beim Lesen von {path}"
-                print(f"[ampel] HTTP {path}: read timeout")
-                writer.close()
-                return None
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            if not response:
-                self.last_err = f"Leere Antwort von {path}"
-                print(f"[ampel] HTTP {path}: empty response")
-                return None
-            return response.decode("utf-8", errors="replace")
+            def _fetch() -> str:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    return resp.read().decode("utf-8", errors="replace")
+            return await loop.run_in_executor(None, _fetch)
+        except urllib.error.HTTPError as exc:
+            self.last_err = f"HTTP {exc.code} {exc.reason}"
+            print(f"[ampel] HTTP {path}: {exc.code} {exc.reason}")
+            return None
         except Exception as exc:
             self.last_err = str(exc)
             print(f"[ampel] HTTP {path}: {exc}")
             return None
 
     async def _get_relay_states(self, ip: str, port: int,
-                                 creds: str) -> dict[int, int] | None:
+                                 username: str, password: str) -> dict[int, int] | None:
         """Liest /status.xml und gibt {relay_idx: 0|1} zurück."""
-        resp = await self._http_get("/status.xml", ip, port, creds)
+        resp = await self._http_get("/status.xml", ip, port, username, password)
         if resp is None:
             return None
         states: dict[int, int] = {}
         for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
             states[int(m.group(1))] = int(m.group(2))
         if not states:
-            # HTTP-Antwort kam an aber kein gültiges XML → HTTP-Status prüfen
-            status_line = resp.split("\r\n")[0] if resp else ""
-            self.last_err = f"Kein Relay-XML in Antwort ({status_line.strip()})"
-            print(f"[ampel] status.xml: kein relay-XML gefunden. Antwort: {resp[:200]!r}")
+            self.last_err = "Kein Relay-XML in Antwort – falsche IP/Firmware?"
+            print(f"[ampel] status.xml: kein relay-XML gefunden. Antwort: {resp[:300]!r}")
             return None
         return states
 
     async def _toggle(self, relay_idx: int, ip: str, port: int,
-                       creds: str) -> bool:
-        """Toggelt ein einzelnes Relais."""
+                       username: str, password: str) -> bool:
+        """Toggelt ein einzelnes Relais (io.cgi?relay=X)."""
         resp = await self._http_get(f"/io.cgi?relay={relay_idx}",
-                                     ip, port, creds)
-        if resp is None:
-            return False
-        status_line = resp.split("\r\n")[0] if resp else ""
-        return "200" in status_line
+                                     ip, port, username, password)
+        # urllib wirft bei 4xx/5xx eine Exception → resp ist None bei Fehler
+        return resp is not None
 
     async def _send_http(self, state: str, ip: str, port: int,
                           c: dict) -> bool:
@@ -178,19 +161,20 @@ class AmpelController:
         cmd_parts = [f"relay={k}→{'ON' if v else 'OFF'}" for k, v in want.items()]
         self.last_cmd = f"{state}: " + ", ".join(cmd_parts)
 
-        creds = self._credentials(c)
+        username = c.get("ampel_username", "admin")
+        password = c.get("ampel_password", "")
 
         # Aktuellen Status lesen
-        current = await self._get_relay_states(ip, port, creds)
+        current = await self._get_relay_states(ip, port, username, password)
         if current is None:
-            print(f"[ampel] ✗ status.xml nicht erreichbar")
+            print(f"[ampel] ✗ status.xml nicht lesbar")
             return False
 
         # Nur toggeln wenn nötig
         ok = True
         for relay_idx, desired in want.items():
             if current.get(relay_idx, 0) != desired:
-                toggled = await self._toggle(relay_idx, ip, port, creds)
+                toggled = await self._toggle(relay_idx, ip, port, username, password)
                 if not toggled:
                     ok = False
                     print(f"[ampel] ✗ toggle relay={relay_idx} fehlgeschlagen")
