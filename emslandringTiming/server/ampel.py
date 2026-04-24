@@ -88,55 +88,68 @@ class AmpelController:
     # ── HTTP/1.0 raw asyncio ──────────────────────────────────────────────────
 
     async def _http_get(self, path: str, ip: str, port: int,
-                         username: str, password: str) -> str | None:
+                         username: str, password: str,
+                         attempts: int = 3) -> str | None:
         """
-        HTTP/1.0 GET mit Basic Auth.
-        HTTP/1.0: Server schließt Verbindung nach Antwort (kein Keep-Alive).
-        → reader.read() liefert alles bis EOF, kein Timeout-Problem.
+        HTTP/1.0 GET mit Basic Auth und curl-kompatiblen Headern.
+        Retry bei kaputter Response (manche Boards reagieren auf den ersten
+        Request nach TCP-Idle mit Garbage).
         """
         creds = base64.b64encode(f"{username}:{password}".encode()).decode()
+        # Header wie curl – manche Boards verlangen User-Agent & Accept
         request = (
             f"GET {path} HTTP/1.0\r\n"
             f"Host: {ip}\r\n"
+            f"User-Agent: curl/7.88.1\r\n"
+            f"Accept: */*\r\n"
             f"Authorization: Basic {creds}\r\n"
             f"\r\n"
         ).encode()
-        try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port), timeout=5.0
-            )
-            writer.write(request)
-            await writer.drain()
-            # Lesen in Chunks: Abbruch bei EOF, bei Stille >2s, oder wenn
-            # die komplette Antwort bereits empfangen wurde.
-            data = b""
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(reader.read(4096), timeout=2.0)
-                    if not chunk:
-                        break          # EOF – sauber fertig
-                    data += chunk
-                    if b"</response>" in data or b"</html>" in data:
-                        break          # Vollständige Antwort empfangen
-                except asyncio.TimeoutError:
-                    break              # Keine weiteren Daten → fertig
-            writer.close()
+
+        last_data = b""
+        for attempt in range(1, attempts + 1):
             try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            if not data:
-                self.last_err = "Leere Antwort vom Relaismodul"
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port), timeout=5.0
+                )
+                writer.write(request)
+                await writer.drain()
+                data = b""
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(4096), timeout=2.0)
+                        if not chunk:
+                            break
+                        data += chunk
+                        if b"</response>" in data or b"</html>" in data:
+                            break
+                    except asyncio.TimeoutError:
+                        break
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                last_data = data
+                # Plausibilitätscheck: HTTP-Antwort oder XML-Tag
+                if data and (b"HTTP/" in data[:20] or b"<" in data[:20]):
+                    return data.decode("utf-8", errors="replace")
+                print(f"[ampel] Versuch {attempt}/{attempts}: kaputte Antwort {data[:50]!r}, retry...")
+                await asyncio.sleep(0.3)
+            except asyncio.TimeoutError:
+                self.last_err = f"Verbindungs-Timeout ({ip}:{port})"
+                print(f"[ampel] Verbindungs-Timeout {ip}:{port}")
                 return None
-            return data.decode("utf-8", errors="replace")
-        except asyncio.TimeoutError:
-            self.last_err = f"Verbindungs-Timeout ({ip}:{port})"
-            print(f"[ampel] Verbindungs-Timeout {ip}:{port}")
-            return None
-        except Exception as exc:
-            self.last_err = str(exc)
-            print(f"[ampel] HTTP {path}: {exc}")
-            return None
+            except Exception as exc:
+                self.last_err = str(exc)
+                print(f"[ampel] HTTP {path}: {exc}")
+                return None
+
+        # Alle Versuche gescheitert – letzte Antwort zurückgeben für Diagnose
+        if last_data:
+            return last_data.decode("utf-8", errors="replace")
+        self.last_err = "Leere Antwort vom Relaismodul"
+        return None
 
     async def _get_relay_states(self, ip: str, port: int,
                                  username: str, password: str) -> dict[int, int] | None:
