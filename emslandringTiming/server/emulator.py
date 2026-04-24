@@ -65,25 +65,33 @@ class Emulator:
                 pass
 
     async def _send(self, line: str) -> None:
-        data = (line + "\r\n").encode("latin-1")
-        dead: list[asyncio.StreamWriter] = []
-        async with self._lock:
-            writers = list(self._writers)
-        for w in writers:
-            try:
-                w.write(data)
-                await w.drain()
-            except Exception:
-                dead.append(w)
-        if dead:
+        import config as cfg
+        enabled = bool(cfg.get().get("emulator_enabled", True))
+
+        sent_count = 0
+        if enabled:
+            data = (line + "\r\n").encode("latin-1")
+            dead: list[asyncio.StreamWriter] = []
             async with self._lock:
-                for w in dead:
-                    self._writers.discard(w)
+                writers = list(self._writers)
+            for w in writers:
+                try:
+                    w.write(data)
+                    await w.drain()
+                    sent_count += 1
+                except Exception:
+                    dead.append(w)
+            if dead:
+                async with self._lock:
+                    for w in dead:
+                        self._writers.discard(w)
+
         await hub.broadcast({
-            "type": "debug_emulator",
-            "ts": time.time(),
-            "line": line,
-            "clients": len(writers),
+            "type":    "debug_emulator",
+            "ts":      time.time(),
+            "line":    line,
+            "clients": sent_count,
+            "enabled": enabled,
         })
 
     # ── Public API called by race_engine ────────────────────────────────────

@@ -17,6 +17,7 @@ import config as cfg
 import database
 import printer
 import run_manager
+from ampel import ampel
 from decoder import decoder
 from emulator import emulator
 from race_engine import engine
@@ -123,6 +124,7 @@ async def websocket_endpoint(ws: WebSocket, client: str = "app"):
                 "noise": decoder.noise,
                 "loop": decoder.loop,
             },
+            "ampel": ampel.status_dict(),
         })
         while True:
             await ws.receive_text()
@@ -290,6 +292,20 @@ async def api_save_settings(body: dict):
         c = cfg.get()
         decoder.start(c["decoder_ip"], c["decoder_port"])
     return {"ok": True}
+
+
+@app.get("/api/ampel")
+async def api_ampel_get():
+    return ampel.status_dict()
+
+
+@app.post("/api/ampel")
+async def api_ampel_set(body: dict):
+    state = body.get("state", "off")
+    if state not in ("off", "green", "red"):
+        raise HTTPException(400, "Ungültiger Zustand: off | green | red")
+    await ampel.send(state)
+    return {"ok": True, "state": state}
 
 
 @app.post("/api/runs/{run_id}/disarm")

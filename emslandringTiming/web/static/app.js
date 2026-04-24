@@ -169,6 +169,7 @@ function handleMsg(msg) {
       state.decoder = msg.decoder || state.decoder;
       // Decoder-Status zuerst aktualisieren – damit er auch bei späterem Fehler sichtbar ist
       updateDecoderStatus(state.decoder);
+      if (msg.ampel) updateAmpelDebug(msg.ampel);
       if (msg.runs_today) {
         state.runs = msg.runs_today;
         renderRunList();
@@ -248,6 +249,10 @@ function handleMsg(msg) {
       updateDecoderStatus(msg);
       break;
 
+    case 'ampel_state':
+      updateAmpelDebug(msg);
+      break;
+
     case 'client_count':
       updateClientBar(msg);
       break;
@@ -293,6 +298,46 @@ function updateDecoderStatus(d) {
     txt.textContent = 'GETRENNT';
     noise.textContent = '';
     loop.textContent  = '';
+  }
+}
+
+// ── Ampel Debug ───────────────────────────────────────────────────────────────
+
+function updateAmpelDebug(d) {
+  if (!d) return;
+  const redEl   = document.getElementById('debug-ampel-red');
+  const greenEl = document.getElementById('debug-ampel-green');
+  const label   = document.getElementById('debug-ampel-state-label');
+  const okLbl   = document.getElementById('debug-ampel-ok-label');
+  const enabledCb  = document.getElementById('debug-ampel-enabled');
+  const enabledLbl = document.getElementById('debug-ampel-enabled-label');
+
+  if (redEl) {
+    redEl.style.background   = d.state === 'red'   ? '#e53935' : '#3a0000';
+    redEl.style.borderColor  = d.state === 'red'   ? '#ff6659' : '#600';
+    redEl.style.boxShadow    = d.state === 'red'   ? '0 0 10px #e53935' : 'none';
+  }
+  if (greenEl) {
+    greenEl.style.background  = d.state === 'green' ? '#43a047' : '#003a00';
+    greenEl.style.borderColor = d.state === 'green' ? '#76d275' : '#060';
+    greenEl.style.boxShadow   = d.state === 'green' ? '0 0 10px #43a047' : 'none';
+  }
+  if (label) {
+    const map = { off: 'AUS', green: 'GRÜN', red: 'ROT' };
+    label.textContent = map[d.state] || d.state;
+    label.style.color = d.state === 'green' ? 'var(--green)' : d.state === 'red' ? 'var(--red)' : 'var(--text-dim)';
+  }
+  if (okLbl) {
+    if (d.ok === true)       okLbl.textContent = '✓ Gesendet';
+    else if (d.ok === false) okLbl.textContent = '✗ Fehler';
+    else if (!d.enabled)     okLbl.textContent = 'deaktiviert';
+    else                     okLbl.textContent = '';
+    okLbl.style.color = d.ok === true ? 'var(--green)' : d.ok === false ? 'var(--red)' : 'var(--text-muted)';
+  }
+  if (enabledCb && enabledCb.checked !== d.enabled) enabledCb.checked = d.enabled;
+  if (enabledLbl) {
+    enabledLbl.textContent = d.enabled ? 'Senden aktiv' : 'Senden deaktiviert';
+    enabledLbl.style.color = d.enabled ? 'var(--green)' : 'var(--text-muted)';
   }
 }
 
@@ -1232,6 +1277,19 @@ async function loadSettings() {
   document.getElementById('s-ws-port').value     = s.websocket_port;
   document.getElementById('s-emulator-port').value= s.emulator_port;
 
+  document.getElementById('s-ampel-ip').value          = s.ampel_ip || '';
+  document.getElementById('s-ampel-port').value        = s.ampel_port || 80;
+  document.getElementById('s-ampel-enabled').checked   = !!s.ampel_enabled;
+  document.getElementById('s-ampel-cmd-off').value     = s.ampel_cmd_off   || 'OFF\\r\\n';
+  document.getElementById('s-ampel-cmd-green').value   = s.ampel_cmd_green || 'GREEN\\r\\n';
+  document.getElementById('s-ampel-cmd-red').value     = s.ampel_cmd_red   || 'RED\\r\\n';
+
+  // Emulator enable state
+  const emuCb  = document.getElementById('debug-emulator-enabled');
+  const emuLbl = document.getElementById('debug-emulator-enabled-label');
+  if (emuCb) emuCb.checked = s.emulator_enabled !== false;
+  if (emuLbl) { emuLbl.textContent = (s.emulator_enabled !== false) ? 'Aktiv' : 'Deaktiviert'; emuLbl.style.color = (s.emulator_enabled !== false) ? 'var(--green)' : 'var(--red)'; }
+
   const netArea = document.getElementById('s-network-printers');
   if (netArea) netArea.value = (s.network_printers || []).join('\n');
   await loadPrinters(s.printer);
@@ -1325,6 +1383,12 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     printer:                document.getElementById('s-printer').value || '',
     network_printers:      (document.getElementById('s-network-printers').value || '')
                              .split('\n').map(s => s.trim()).filter(Boolean),
+    ampel_ip:          document.getElementById('s-ampel-ip').value,
+    ampel_port:        +document.getElementById('s-ampel-port').value || 80,
+    ampel_enabled:     document.getElementById('s-ampel-enabled').checked,
+    ampel_cmd_off:     document.getElementById('s-ampel-cmd-off').value || 'OFF\\r\\n',
+    ampel_cmd_green:   document.getElementById('s-ampel-cmd-green').value || 'GREEN\\r\\n',
+    ampel_cmd_red:     document.getElementById('s-ampel-cmd-red').value || 'RED\\r\\n',
   };
   await fetch('/api/settings', {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1763,6 +1827,39 @@ document.getElementById('btn-debug-clear').addEventListener('click', () => {
   document.getElementById('debug-emulator-log').innerHTML = '';
 });
 
+// Ampel: manuelle Befehle
+async function _sendAmpel(state) {
+  try {
+    await fetch('/api/ampel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    });
+  } catch(_) {}
+}
+document.getElementById('btn-ampel-off')  ?.addEventListener('click', () => _sendAmpel('off'));
+document.getElementById('btn-ampel-green')?.addEventListener('click', () => _sendAmpel('green'));
+document.getElementById('btn-ampel-red')  ?.addEventListener('click', () => _sendAmpel('red'));
+
+// Ampel: Enable-Toggle speichert in Config
+document.getElementById('debug-ampel-enabled')?.addEventListener('change', async e => {
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ampel_enabled: e.target.checked }),
+  });
+});
+
+// Emulator: Enable-Toggle
+document.getElementById('debug-emulator-enabled')?.addEventListener('change', async e => {
+  const enabled = e.target.checked;
+  const lbl = document.getElementById('debug-emulator-enabled-label');
+  if (lbl) { lbl.textContent = enabled ? 'Aktiv' : 'Deaktiviert'; lbl.style.color = enabled ? 'var(--green)' : 'var(--red)'; }
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emulator_enabled: enabled }),
+  });
+});
+
 function appendDebugEntry(type, msg) {
   if (_debugPaused) return;
   const logId = type === 'decoder' ? 'debug-decoder-log' : 'debug-emulator-log';
@@ -1780,7 +1877,10 @@ function appendDebugEntry(type, msg) {
       body = `<span class="hi">T:${kn}</span> <span class="dim">ts=${msg.timestamp_us}</span> Sig:<span class="hi">${msg.strength}</span> Hits:${msg.hits}`;
     }
   } else {
-    body = `<span class="hi-emu">${msg.line}</span> <span class="dim">(${msg.clients} Empfänger)</span>`;
+    const sentInfo = msg.enabled === false
+      ? `<span style="color:var(--yellow)">(nicht gesendet – deaktiviert)</span>`
+      : `<span class="dim">(${msg.clients} Empfänger)</span>`;
+    body = `<span class="hi-emu">${msg.line}</span> ${sentInfo}`;
   }
 
   const entry = document.createElement('div');

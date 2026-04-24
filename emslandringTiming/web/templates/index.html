@@ -203,6 +203,37 @@
       </div>
 
       <div class="settings-section">
+        <h3>🚦 Ampel</h3>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>IP-Adresse</label>
+            <input type="text" id="s-ampel-ip" placeholder="z.B. 192.168.178.50">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="s-ampel-port" value="80">
+          </div>
+          <div class="form-group" style="grid-column:1/-1;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="s-ampel-enabled" style="width:auto;margin:0">
+            <label for="s-ampel-enabled" style="cursor:pointer;margin:0">Ampel aktiv (Befehle automatisch senden)</label>
+          </div>
+          <div class="form-group">
+            <label>Befehl AUS <small style="color:var(--text-muted)">(\\r\\n = CRLF)</small></label>
+            <input type="text" id="s-ampel-cmd-off" placeholder="OFF\r\n" style="font-family:monospace">
+          </div>
+          <div class="form-group">
+            <label>Befehl GRÜN</label>
+            <input type="text" id="s-ampel-cmd-green" placeholder="GREEN\r\n" style="font-family:monospace">
+          </div>
+          <div class="form-group">
+            <label>Befehl ROT</label>
+            <input type="text" id="s-ampel-cmd-red" placeholder="RED\r\n" style="font-family:monospace">
+          </div>
+        </div>
+        <small style="color:var(--yellow)">⚠ Protokoll TBD – Befehle anpassen sobald Ampel-Gerät bekannt.</small>
+      </div>
+
+      <div class="settings-section">
         <h3>Drucker</h3>
         <div class="settings-grid">
           <div class="form-group" style="grid-column: 1 / -1">
@@ -338,7 +369,8 @@
           <input type="checkbox" id="debug-pause"> Pausiert
         </label>
       </div>
-      <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden">
+      <!-- Log panels: Decoder + Emulator -->
+      <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden;min-height:0">
         <div class="debug-panel">
           <div class="debug-panel-header">
             📡 Decoder Rohdaten
@@ -349,8 +381,46 @@
           <div class="debug-log" id="debug-decoder-log"></div>
         </div>
         <div class="debug-panel" style="border-left:1px solid var(--border)">
-          <div class="debug-panel-header">📤 Zeittafel Emulator (Kloft)</div>
+          <div class="debug-panel-header">
+            📤 Zeittafel Emulator (Kloft)
+            <label style="margin-left:auto;font-size:10px;display:flex;align-items:center;gap:4px;font-weight:normal;cursor:pointer"
+                   title="Wenn deaktiviert, werden keine Nachrichten an die Kloft-Anzeigetafel gesendet">
+              <input type="checkbox" id="debug-emulator-enabled" checked>
+              <span id="debug-emulator-enabled-label" style="color:var(--green)">Aktiv</span>
+            </label>
+          </div>
           <div class="debug-log" id="debug-emulator-log"></div>
+        </div>
+      </div>
+      <!-- Ampel panel (bottom, fixed height) -->
+      <div style="border-top:2px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:24px;flex-shrink:0;background:var(--bg2)">
+        <span style="font-size:12px;font-weight:600;color:var(--white)">🚦 Ampel</span>
+        <!-- Visual traffic light -->
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:center;background:#222;border-radius:8px;padding:6px 8px;border:1px solid #444">
+          <div id="debug-ampel-red"   style="width:28px;height:28px;border-radius:50%;background:#3a0000;border:2px solid #600;transition:background .3s"></div>
+          <div id="debug-ampel-green" style="width:28px;height:28px;border-radius:50%;background:#003a00;border:2px solid #060;transition:background .3s"></div>
+        </div>
+        <!-- State label + ok indicator -->
+        <div style="min-width:80px">
+          <div id="debug-ampel-state-label" style="font-size:13px;font-weight:600;color:var(--text-dim)">AUS</div>
+          <div id="debug-ampel-ok-label"    style="font-size:10px;color:var(--text-muted);margin-top:2px"></div>
+        </div>
+        <!-- Manual buttons -->
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <span style="font-size:10px;color:var(--text-muted)">Manuell senden:</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" id="btn-ampel-off"   style="background:#555">⬛ AUS</button>
+            <button class="btn btn-sm" id="btn-ampel-green" style="background:#1a5c1a;color:#fff">🟢 GRÜN</button>
+            <button class="btn btn-sm" id="btn-ampel-red"   style="background:#6b1a1a;color:#fff">🔴 ROT</button>
+          </div>
+        </div>
+        <!-- Enable toggle -->
+        <div style="margin-left:auto;display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+          <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="debug-ampel-enabled">
+            <span id="debug-ampel-enabled-label" style="color:var(--text-muted)">Senden deaktiviert</span>
+          </label>
+          <small style="color:var(--text-muted);font-size:9px">Protokoll TBD – nur für Tests</small>
         </div>
       </div>
     </div>

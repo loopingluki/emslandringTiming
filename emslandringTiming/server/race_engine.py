@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import config as cfg
 import database
+from ampel import ampel
 from emulator import emulator
 from ws_hub import hub
 
@@ -155,6 +156,7 @@ class RaceEngine:
         self.karts = {}
         await database.update_run(old_run_id, status="pending")
         await hub.broadcast({"type": "run_state", "status": "none"})
+        await ampel.send("off")
         await self._broadcast_run_list_update()
 
     async def start_gp(self) -> None:
@@ -298,6 +300,7 @@ class RaceEngine:
         await emulator.session_start(self.run_id, group)
 
         self._timer_task = asyncio.create_task(self._timer_loop(), name="timer")
+        await ampel.send("green")
         await self._broadcast_run_state()
         await self._broadcast_run_list_update()
 
@@ -334,6 +337,7 @@ class RaceEngine:
             for k in self.karts.values():
                 k.seen_after_finish = False
             wait = cfg.get()["wait_time_sec"]
+            await ampel.send("red")
         else:
             # Grand Prix: erst auf Führenden warten
             self._finish_phase = "waiting_leader"
@@ -355,6 +359,7 @@ class RaceEngine:
         if leader.seen_after_finish:
             # Führender hat Linie überquert → Finish-Signal, warte auf alle
             await emulator.session_finish()
+            await ampel.send("red")
             self._finish_phase = "waiting_others"
             for k in self.karts.values():
                 k.seen_after_finish = False
@@ -400,6 +405,7 @@ class RaceEngine:
 
     async def _finalize(self) -> None:
         await self._cancel_tasks()
+        await ampel.send("off")
         mode = self.run["mode"] if self.run else "training"
 
         if self.status not in ("finishing",):

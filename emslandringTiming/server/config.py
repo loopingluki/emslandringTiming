@@ -17,6 +17,13 @@ _DEFAULTS: dict = {
     "wait_time_gp_sec": 120,
     "firebase_credentials": "",
     "printer": "default",
+    "ampel_ip":          "",
+    "ampel_port":        80,
+    "ampel_enabled":     False,
+    "ampel_cmd_off":     "OFF\r\n",
+    "ampel_cmd_green":   "GREEN\r\n",
+    "ampel_cmd_red":     "RED\r\n",
+    "emulator_enabled":  True,
     "classes": [
         {"name": "Minikart",  "color": "#f9a800"},
         {"name": "Leihkart",  "color": "#1565c0"},
