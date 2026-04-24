@@ -108,14 +108,21 @@ class AmpelController:
             await writer.drain()
             response = b""
             try:
-                response = await asyncio.wait_for(reader.read(1024), timeout=3.0)
+                response = await asyncio.wait_for(reader.read(4096), timeout=3.0)
             except asyncio.TimeoutError:
-                pass
+                self.last_err = f"Timeout beim Lesen von {path}"
+                print(f"[ampel] HTTP {path}: read timeout")
+                writer.close()
+                return None
             writer.close()
             try:
                 await writer.wait_closed()
             except Exception:
                 pass
+            if not response:
+                self.last_err = f"Leere Antwort von {path}"
+                print(f"[ampel] HTTP {path}: empty response")
+                return None
             return response.decode("utf-8", errors="replace")
         except Exception as exc:
             self.last_err = str(exc)
@@ -131,6 +138,12 @@ class AmpelController:
         states: dict[int, int] = {}
         for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
             states[int(m.group(1))] = int(m.group(2))
+        if not states:
+            # HTTP-Antwort kam an aber kein gültiges XML → HTTP-Status prüfen
+            status_line = resp.split("\r\n")[0] if resp else ""
+            self.last_err = f"Kein Relay-XML in Antwort ({status_line.strip()})"
+            print(f"[ampel] status.xml: kein relay-XML gefunden. Antwort: {resp[:200]!r}")
+            return None
         return states
 
     async def _toggle(self, relay_idx: int, ip: str, port: int,
