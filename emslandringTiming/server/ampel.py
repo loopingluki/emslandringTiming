@@ -89,11 +89,13 @@ class AmpelController:
     # ── HTTP via urllib (thread executor) ────────────────────────────────────
 
     def _make_request(self, url: str, username: str, password: str) -> urllib.request.Request:
-        """Erstellt einen urllib.Request mit Basic Auth."""
+        """Erstellt einen urllib.Request mit Basic Auth und Connection: close."""
         import base64
         req = urllib.request.Request(url)
         creds = base64.b64encode(f"{username}:{password}".encode()).decode()
         req.add_header("Authorization", f"Basic {creds}")
+        # Connection: close → Box schließt Verbindung nach Antwort (kein Timeout-Warten)
+        req.add_header("Connection", "close")
         return req
 
     async def _http_get(self, path: str, ip: str, port: int,
