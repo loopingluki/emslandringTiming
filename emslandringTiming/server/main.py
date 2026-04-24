@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
     decoder.start(c["decoder_ip"], c["decoder_port"])
     await emulator.start(c["emulator_port"])
     hub.start_keepalive()
+    ampel.start()
 
     # Läufe die beim letzten Absturz im Status running/paused/armed steckten → done
     runs = await database.get_runs_for_date(date.today().isoformat())
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     await hub.stop_keepalive()
     await decoder.stop()
     await emulator.stop()
+    await ampel.stop()
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────

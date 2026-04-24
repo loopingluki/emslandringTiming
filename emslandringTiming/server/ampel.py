@@ -36,14 +36,32 @@ import config as cfg
 
 
 class AmpelController:
+    # Polling-Intervall in Sekunden (wie oft /status.xml abgefragt wird)
+    POLL_INTERVAL = 5.0
+
     def __init__(self) -> None:
         self.state: str = "off"
         self.last_ok: bool | None = None
         self.last_sent: float = 0.0
         self.last_cmd: str = ""
         self.last_err: str = ""
+        self._lock = asyncio.Lock()          # serialisiert HTTP-Requests
+        self._poll_task: asyncio.Task | None = None
 
     # ── Public ────────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Startet das periodische Status-Polling (einmal beim App-Start)."""
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    async def stop(self) -> None:
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
 
     async def send(self, new_state: str, force: bool = False) -> bool:
         """
@@ -93,8 +111,15 @@ class AmpelController:
         """
         HTTP-GET via curl-Subprozess (HTTP/0.9 support für Relay-Board).
         Retry bei Timeout – das Board ist manchmal kurz unerreichbar nach
-        einem Toggle.
+        einem Toggle. Durch _lock serialisiert, damit Polling und aktive
+        Sends nicht parallel aufs Board zugreifen.
         """
+        async with self._lock:
+            return await self._http_get_locked(path, ip, port, username, password, attempts)
+
+    async def _http_get_locked(self, path: str, ip: str, port: int,
+                                username: str, password: str,
+                                attempts: int) -> str | None:
         url = f"http://{ip}:{port}{path}"
         for attempt in range(1, attempts + 1):
             print(f"[ampel] curl -> {url} (Versuch {attempt}/{attempts})")
@@ -212,6 +237,85 @@ class AmpelController:
         if ok:
             print(f"[ampel] ✓ {state}  ({self.last_cmd})")
         return ok
+
+    # ── Polling ───────────────────────────────────────────────────────────────
+
+    def _derive_state(self, states: dict[int, int], c: dict) -> str:
+        """Ermittelt 'red' | 'green' | 'off' | 'both' aus Relay-Zuständen."""
+        red_idx   = max(0, min(7, int(c.get("ampel_relay_red",   4)) - 1))
+        green_idx = max(0, min(7, int(c.get("ampel_relay_green", 6)) - 1))
+        red   = states.get(red_idx,   0) == 1
+        green = states.get(green_idx, 0) == 1
+        if red and green:     return "both"
+        if red:               return "red"
+        if green:             return "green"
+        return "off"
+
+    async def _poll_loop(self) -> None:
+        """
+        Fragt periodisch /status.xml ab und broadcastet Änderungen.
+        So bekommen wir mit, wenn externe Programme (MyLaps, Taster am
+        Modul) die Relais umschalten.
+        """
+        from ws_hub import hub
+
+        # Etwas verzögern, damit uvicorn erst startet
+        await asyncio.sleep(2.0)
+        while True:
+            try:
+                c = cfg.get()
+                ip = c.get("ampel_ip", "").strip()
+                if not ip:
+                    await asyncio.sleep(self.POLL_INTERVAL)
+                    continue
+                port     = int(c.get("ampel_port", 80))
+                username = c.get("ampel_username", "admin")
+                password = c.get("ampel_password", "")
+
+                # Poll nutzt weniger aggressive Retries (1 Versuch statt 3)
+                async with self._lock:
+                    resp = await self._http_get_locked(
+                        "/status.xml", ip, port, username, password, attempts=1)
+
+                if resp:
+                    states: dict[int, int] = {}
+                    for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
+                        states[int(m.group(1))] = int(m.group(2))
+                    if states:
+                        new_state = self._derive_state(states, c)
+                        reachable = True
+                    else:
+                        new_state = self.state
+                        reachable = False
+                else:
+                    new_state = self.state
+                    reachable = False
+
+                # Nur broadcasten bei Änderung (State oder Erreichbarkeit)
+                state_changed = new_state != self.state
+                ok_changed = (self.last_ok is not True) if reachable else (self.last_ok is not False)
+                if state_changed or ok_changed:
+                    self.state    = new_state
+                    self.last_ok  = reachable
+                    self.last_sent = time.time()
+                    enabled = bool(c.get("ampel_enabled", False))
+                    await hub.broadcast({
+                        "type":     "ampel_state",
+                        "state":    self.state,
+                        "enabled":  enabled,
+                        "forced":   False,
+                        "ok":       reachable,
+                        "ts":       self.last_sent,
+                        "last_cmd": self.last_cmd,
+                        "last_err": self.last_err if not reachable else "",
+                    })
+                    if state_changed:
+                        print(f"[ampel] Poll: Zustand {new_state} erkannt")
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                print(f"[ampel] Poll-Loop Fehler: {exc}")
+            await asyncio.sleep(self.POLL_INTERVAL)
 
     # ── Status ────────────────────────────────────────────────────────────────
 
