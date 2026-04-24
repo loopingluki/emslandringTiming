@@ -1277,12 +1277,11 @@ async function loadSettings() {
   document.getElementById('s-ws-port').value     = s.websocket_port;
   document.getElementById('s-emulator-port').value= s.emulator_port;
 
-  document.getElementById('s-ampel-ip').value          = s.ampel_ip || '';
-  document.getElementById('s-ampel-port').value        = s.ampel_port || 80;
-  document.getElementById('s-ampel-enabled').checked   = !!s.ampel_enabled;
-  document.getElementById('s-ampel-cmd-off').value     = s.ampel_cmd_off   || 'OFF\\r\\n';
-  document.getElementById('s-ampel-cmd-green').value   = s.ampel_cmd_green || 'GREEN\\r\\n';
-  document.getElementById('s-ampel-cmd-red').value     = s.ampel_cmd_red   || 'RED\\r\\n';
+  document.getElementById('s-ampel-ip').value           = s.ampel_ip || '192.168.178.128';
+  document.getElementById('s-ampel-port').value         = s.ampel_port || 17494;
+  document.getElementById('s-ampel-enabled').checked    = !!s.ampel_enabled;
+  document.getElementById('s-ampel-relay-red').value    = s.ampel_relay_red   ?? 1;
+  document.getElementById('s-ampel-relay-green').value  = s.ampel_relay_green ?? 2;
 
   // Emulator enable state
   const emuCb  = document.getElementById('debug-emulator-enabled');
@@ -1383,12 +1382,11 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     printer:                document.getElementById('s-printer').value || '',
     network_printers:      (document.getElementById('s-network-printers').value || '')
                              .split('\n').map(s => s.trim()).filter(Boolean),
-    ampel_ip:          document.getElementById('s-ampel-ip').value,
-    ampel_port:        +document.getElementById('s-ampel-port').value || 80,
-    ampel_enabled:     document.getElementById('s-ampel-enabled').checked,
-    ampel_cmd_off:     document.getElementById('s-ampel-cmd-off').value || 'OFF\\r\\n',
-    ampel_cmd_green:   document.getElementById('s-ampel-cmd-green').value || 'GREEN\\r\\n',
-    ampel_cmd_red:     document.getElementById('s-ampel-cmd-red').value || 'RED\\r\\n',
+    ampel_ip:           document.getElementById('s-ampel-ip').value,
+    ampel_port:         +document.getElementById('s-ampel-port').value || 17494,
+    ampel_enabled:      document.getElementById('s-ampel-enabled').checked,
+    ampel_relay_red:    +document.getElementById('s-ampel-relay-red').value   || 1,
+    ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 2,
   };
   await fetch('/api/settings', {
     method: 'POST', headers: {'Content-Type':'application/json'},

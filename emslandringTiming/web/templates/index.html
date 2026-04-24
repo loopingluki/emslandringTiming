@@ -204,33 +204,32 @@
 
       <div class="settings-section">
         <h3>🚦 Ampel</h3>
+        <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
+          Devantech 8-Kanal Ethernet Relais Modul – TCP-Binärprotokoll (0x21 + Bitmask)
+        </p>
         <div class="settings-grid">
           <div class="form-group">
             <label>IP-Adresse</label>
-            <input type="text" id="s-ampel-ip" placeholder="z.B. 192.168.178.50">
+            <input type="text" id="s-ampel-ip" placeholder="192.168.178.128">
           </div>
           <div class="form-group">
-            <label>Port</label>
-            <input type="number" id="s-ampel-port" value="80">
+            <label>TCP-Port</label>
+            <input type="number" id="s-ampel-port" value="17494">
+          </div>
+          <div class="form-group">
+            <label>Relais-Nr. ROT <small style="color:var(--text-muted)">(1–8)</small></label>
+            <input type="number" id="s-ampel-relay-red" min="1" max="8" value="1">
+          </div>
+          <div class="form-group">
+            <label>Relais-Nr. GRÜN <small style="color:var(--text-muted)">(1–8)</small></label>
+            <input type="number" id="s-ampel-relay-green" min="1" max="8" value="2">
           </div>
           <div class="form-group" style="grid-column:1/-1;display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="s-ampel-enabled" style="width:auto;margin:0">
             <label for="s-ampel-enabled" style="cursor:pointer;margin:0">Ampel aktiv (Befehle automatisch senden)</label>
           </div>
-          <div class="form-group">
-            <label>Befehl AUS <small style="color:var(--text-muted)">(\\r\\n = CRLF)</small></label>
-            <input type="text" id="s-ampel-cmd-off" placeholder="OFF\r\n" style="font-family:monospace">
-          </div>
-          <div class="form-group">
-            <label>Befehl GRÜN</label>
-            <input type="text" id="s-ampel-cmd-green" placeholder="GREEN\r\n" style="font-family:monospace">
-          </div>
-          <div class="form-group">
-            <label>Befehl ROT</label>
-            <input type="text" id="s-ampel-cmd-red" placeholder="RED\r\n" style="font-family:monospace">
-          </div>
         </div>
-        <small style="color:var(--yellow)">⚠ Protokoll TBD – Befehle anpassen sobald Ampel-Gerät bekannt.</small>
+        <small style="color:var(--text-muted)">Befehl: 0x21 + Bitmask. AUS = 0x00 | ROT = Bit (Relais-1) gesetzt | GRÜN = Bit (Relais-1) gesetzt</small>
       </div>
 
       <div class="settings-section">
