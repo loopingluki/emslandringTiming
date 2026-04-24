@@ -506,6 +506,10 @@ table#kart-table tbody tr.kart-row.flash { background: #1a3a1a; }
 table#kart-table tbody tr.kart-row.finished { background: #0d2d1a; }
 table#kart-table tbody tr.kart-row.finished td.kart-name { color: var(--green); }
 
+/* Light Theme: Cyan für Nachläufer nach Zeitablauf */
+html[data-theme="light"] table#kart-table tbody tr.kart-row.finished { background: #00FFFF; }
+html[data-theme="light"] table#kart-table tbody tr.kart-row.finished td.kart-name { color: #005d66; }
+
 table#kart-table td {
   padding: 9px 10px;
   vertical-align: middle;
