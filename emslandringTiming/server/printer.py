@@ -144,9 +144,21 @@ async def _gather_run_data(run_id: int) -> dict:
             round((statistics.pstdev(laps) / statistics.mean(laps)) * 100, 2)
             if len(laps) >= 2 else None
         )
-    ranked = sorted(karts.values(),
-                    key=lambda k: (-k["lap_count"],
-                                   k["total_us"] if k["lap_count"] else 10**18))
+    # Sortierung modus-abhängig – identisch zur Live-UI (race_engine._sorted_karts)
+    mode = run.get("mode", "training")
+    if mode == "training":
+        # Training: beste Runde entscheidet (Karts ohne Runde ans Ende)
+        ranked = sorted(
+            karts.values(),
+            key=lambda k: (k["best_us"] is None, k["best_us"] or 10**18),
+        )
+    else:
+        # Grand Prix: meiste Runden, dann geringste Gesamtzeit
+        ranked = sorted(
+            karts.values(),
+            key=lambda k: (-k["lap_count"],
+                           k["total_us"] if k["lap_count"] else 10**18),
+        )
     leader_total = ranked[0]["total_us"] if ranked and ranked[0]["lap_count"] else None
     for pos, k in enumerate(ranked, 1):
         k["position"] = pos
