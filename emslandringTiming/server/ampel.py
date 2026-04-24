@@ -134,25 +134,30 @@ class AmpelController:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "curl",
-                    "-sS",
+                    "-v",                         # verbose → stderr zeigt alle Schritte
                     "--http0.9",
-                    "--noproxy", "*",            # jeglichen Proxy umgehen
                     "--connect-timeout", "2",
                     "--max-time", "3",
                     "-u", f"{username}:{password}",
                     url,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=_NO_PROXY_ENV,
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
                 out_txt = stdout.decode("utf-8", errors="replace")
                 err_txt = stderr.decode("utf-8", errors="replace").strip()
+                # Verbose-Output IMMER loggen (auch bei Erfolg – zum Debuggen)
+                print(f"[ampel] curl stderr:\n{err_txt}")
                 if proc.returncode == 0:
                     return out_txt
-                detail = err_txt or "keine Ausgabe"
-                self.last_err = f"curl exit={proc.returncode}: {detail}"
-                print(f"[ampel] curl exit={proc.returncode}: {err_txt}")
+                # Letzte sinnvolle Zeile aus stderr extrahieren
+                detail_line = next(
+                    (l for l in reversed(err_txt.splitlines())
+                     if l and not l.startswith("*") and not l.startswith(">")
+                         and not l.startswith("<") and not l.startswith("{")),
+                    err_txt[:120] or "keine Ausgabe"
+                )
+                self.last_err = f"curl exit={proc.returncode}: {detail_line.strip()}"
                 return None
             except asyncio.TimeoutError:
                 self.last_err = "curl-Prozess blockiert"
