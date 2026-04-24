@@ -200,36 +200,43 @@
             <input type="number" id="s-emulator-port">
           </div>
         </div>
-      </div>
-
-      <div class="settings-section">
-        <h3>🚦 Ampel</h3>
-        <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
-          Devantech 8-Kanal Ethernet Relais Modul – TCP-Binärprotokoll (0x21 + Bitmask)
-        </p>
-        <div class="settings-grid">
-          <div class="form-group">
-            <label>IP-Adresse</label>
-            <input type="text" id="s-ampel-ip" placeholder="192.168.178.128">
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em">🚦 Ampel</span>
+            <div class="header-spacer"></div>
+            <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="s-ampel-enabled" style="width:auto;margin:0">
+              <span>Automatisch senden</span>
+            </label>
+            <button class="btn btn-sm" id="btn-ampel-seq" style="font-size:10px">📋 Ablauf</button>
           </div>
-          <div class="form-group">
-            <label>TCP-Port</label>
-            <input type="number" id="s-ampel-port" value="17494">
-          </div>
-          <div class="form-group">
-            <label>Relais-Nr. ROT <small style="color:var(--text-muted)">(1–8)</small></label>
-            <input type="number" id="s-ampel-relay-red" min="1" max="8" value="1">
-          </div>
-          <div class="form-group">
-            <label>Relais-Nr. GRÜN <small style="color:var(--text-muted)">(1–8)</small></label>
-            <input type="number" id="s-ampel-relay-green" min="1" max="8" value="2">
-          </div>
-          <div class="form-group" style="grid-column:1/-1;display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="s-ampel-enabled" style="width:auto;margin:0">
-            <label for="s-ampel-enabled" style="cursor:pointer;margin:0">Ampel aktiv (Befehle automatisch senden)</label>
+          <div class="settings-grid" id="ampel-settings-grid">
+            <div class="form-group">
+              <label>IP-Adresse</label>
+              <input type="text" id="s-ampel-ip" placeholder="192.168.178.128">
+            </div>
+            <div class="form-group">
+              <label>Port</label>
+              <input type="number" id="s-ampel-port" value="80">
+            </div>
+            <div class="form-group">
+              <label>Benutzername</label>
+              <input type="text" id="s-ampel-username" placeholder="admin">
+            </div>
+            <div class="form-group">
+              <label>Passwort</label>
+              <input type="password" id="s-ampel-password">
+            </div>
+            <div class="form-group">
+              <label>Relais ROT <small style="color:var(--text-muted)">(Nr. laut Web-UI, 1–8)</small></label>
+              <input type="number" id="s-ampel-relay-red" min="1" max="8" value="4">
+            </div>
+            <div class="form-group">
+              <label>Relais GRÜN <small style="color:var(--text-muted)">(Nr. laut Web-UI, 1–8)</small></label>
+              <input type="number" id="s-ampel-relay-green" min="1" max="8" value="6">
+            </div>
           </div>
         </div>
-        <small style="color:var(--text-muted)">Befehl: 0x21 + Bitmask. AUS = 0x00 | ROT = Bit (Relais-1) gesetzt | GRÜN = Bit (Relais-1) gesetzt</small>
       </div>
 
       <div class="settings-section">
@@ -446,6 +453,10 @@
     <span id="client-count-dashboard">0</span>× Dashboard &nbsp;·&nbsp;
     <span id="client-count-total">0</span> gesamt
   </span>
+  <span id="ampel-bar-indicators" title="Ampel-Status">
+    <span id="ampel-bar-red"   class="ampel-bar-dot ampel-bar-dot-red"></span>
+    <span id="ampel-bar-green" class="ampel-bar-dot ampel-bar-dot-green"></span>
+  </span>
 </div>
 
 <!-- ── Context Menu ── -->
@@ -640,6 +651,56 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-sm btn-green" id="cls-close">Schließen</button>
+    </div>
+  </div>
+
+  <!-- Ampel Ablauf Modal -->
+  <div class="modal" id="modal-ampel-seq" style="display:none;max-width:560px;width:95%">
+    <h2>🚦 Ampel-Ablauf programmieren</h2>
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:14px">
+      Legt fest, welchen Zustand die Ampel bei jedem Ereignis annimmt.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:6px 8px;color:var(--text-dim);font-weight:600">Situation</th>
+          <th style="text-align:left;padding:6px 8px;color:var(--text-dim);font-weight:600;width:130px">Ampel</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">Training: Scharf schalten</td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-training-arm" style="width:100%"></select></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">Training: erstes Kart passiert <small style="color:var(--text-muted)">(Timer startet)</small></td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-training-start" style="width:100%"></select></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">Training: Zeit abgelaufen</td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-training-finish" style="width:100%"></select></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">GP: Rennen starten <small style="color:var(--text-muted)">(Button)</small></td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-gp-start" style="width:100%"></select></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">GP: Zeit abgelaufen + Führender passiert</td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-gp-finish" style="width:100%"></select></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 8px">Lauf fertig / abgebrochen</td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-done" style="width:100%"></select></td>
+        </tr>
+        <tr>
+          <td style="padding:7px 8px">Unscharf schalten</td>
+          <td style="padding:4px 8px"><select class="ampel-seq-sel" id="seq-disarm" style="width:100%"></select></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="seq-cancel">Abbrechen</button>
+      <button class="btn btn-sm btn-green" id="seq-save">Speichern</button>
     </div>
   </div>
 

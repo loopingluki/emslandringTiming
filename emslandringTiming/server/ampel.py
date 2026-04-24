@@ -1,22 +1,35 @@
 """
-Ampel-Controller – Devantech 8-Kanal Ethernet Relais Modul (ETH008/ETH8020).
+Ampel-Controller – Devantech 8-Kanal Ethernet Relais Modul.
 
-Protokoll: TCP-Binär, Port 17494
-  Befehl 0x21 + Bitmask setzt alle Relais auf einmal:
-    Bit 0 = Relais 1, Bit 1 = Relais 2, ... Bit 7 = Relais 8
+Protokoll: HTTP GET mit Basic Auth (Port 80)
+  GET /status.xml          → aktuellen Zustand lesen
+                             <relay0>0</relay0> ... <relay7>1</relay7>  (0-basiert)
+  GET /io.cgi?relay=X      → Relais X (0-basiert) toggeln
 
-  AUS:  0x21 0x00          → alle Relais aus
-  ROT:  0x21 <mask_rot>    → Relais N_rot an, alle anderen aus
-  GRÜN: 0x21 <mask_gruen>  → Relais N_gruen an, alle anderen aus
+  Steuerung: Status lesen → nur toggeln wenn Soll ≠ Ist
 
 Konfiguration in config.json:
-  ampel_ip          – IP-Adresse des Moduls  (z.B. "192.168.178.128")
-  ampel_port        – TCP-Port               (Standard: 17494)
-  ampel_enabled     – bool, ob Befehle beim Lauf automatisch gesendet werden
-  ampel_relay_red   – Relais-Nr. für ROT     (1–8, Standard: 1)
-  ampel_relay_green – Relais-Nr. für GRÜN    (1–8, Standard: 6)
+  ampel_ip           – IP-Adresse (z.B. "192.168.178.128")
+  ampel_port         – HTTP-Port  (Standard: 80)
+  ampel_username     – Benutzername (Standard: "admin")
+  ampel_password     – Passwort
+  ampel_enabled      – bool, ob Befehle automatisch gesendet werden
+  ampel_relay_red    – Relais-Nr. ROT   (Web-UI 1–8, Standard: 4)
+  ampel_relay_green  – Relais-Nr. GRÜN  (Web-UI 1–8, Standard: 6)
+
+Ablauf-Sequenz (config.json):
+  ampel_seq_training_arm      – Zustand beim Scharf schalten (Training)
+  ampel_seq_training_start    – Zustand beim ersten Passing (Training)
+  ampel_seq_training_finish   – Zustand wenn Zeit abgelaufen (Training)
+  ampel_seq_gp_start          – Zustand wenn GP gestartet
+  ampel_seq_gp_finish         – Zustand wenn GP-Führender Linie überquert
+  ampel_seq_done              – Zustand nach Lauf fertig / abgebrochen
+  ampel_seq_disarm            – Zustand beim Unscharf schalten
+  Werte: "none" | "off" | "green" | "red"
 """
 import asyncio
+import base64
+import re
 import time
 
 import config as cfg
@@ -24,106 +37,166 @@ import config as cfg
 
 class AmpelController:
     def __init__(self) -> None:
-        self.state: str = "off"           # "off" | "green" | "red"
-        self.last_ok: bool | None = None  # None = noch nie gesendet
+        self.state: str = "off"
+        self.last_ok: bool | None = None
         self.last_sent: float = 0.0
-        self.last_cmd: str = ""           # für Debug-Anzeige
+        self.last_cmd: str = ""
 
     # ── Public ────────────────────────────────────────────────────────────────
 
     async def send(self, new_state: str, force: bool = False) -> bool:
         """
-        Setzt den Ampel-Zustand und sendet den Befehl.
-
-        force=True  → sendet immer (für manuellen Debug-Test), ignoriert enabled-Flag
-        force=False → sendet nur wenn ampel_enabled=True in config (normaler Betrieb)
-
-        Broadcastet immer den neuen Zustand per WebSocket.
+        Setzt Ampel-Zustand und sendet HTTP-Befehle.
+        force=True  → sendet immer (Debug-Test)
+        force=False → nur wenn ampel_enabled=True
         """
-        from ws_hub import hub  # lokaler Import, vermeide Kreisimport
+        from ws_hub import hub
 
         self.state = new_state
         c = cfg.get()
         enabled = bool(c.get("ampel_enabled", False))
 
         ok: bool | None = None
-        should_send = enabled or force
-        if should_send:
-            ip   = c.get("ampel_ip", "")
-            port = int(c.get("ampel_port", 17494))
+        if enabled or force:
+            ip   = c.get("ampel_ip", "192.168.178.128")
+            port = int(c.get("ampel_port", 80))
             if ip:
-                ok = await self._send_devantech(new_state, ip, port, c)
-            # else: keine IP konfiguriert → nichts senden
+                ok = await self._send_http(new_state, ip, port, c)
 
         self.last_ok   = ok
         self.last_sent = time.time()
 
         await hub.broadcast({
-            "type":    "ampel_state",
-            "state":   self.state,
-            "enabled": enabled,
-            "forced":  force,
-            "ok":      ok,
-            "ts":      self.last_sent,
+            "type":     "ampel_state",
+            "state":    self.state,
+            "enabled":  enabled,
+            "forced":   force,
+            "ok":       ok,
+            "ts":       self.last_sent,
             "last_cmd": self.last_cmd,
         })
         return ok is not False
 
-    # ── Devantech ETH Relay Protokoll ─────────────────────────────────────────
+    async def send_seq(self, seq_key: str) -> None:
+        """Sendet den in config konfigurierten Zustand für ein Ereignis."""
+        state = cfg.get().get(seq_key, "none")
+        if state and state != "none":
+            await self.send(state)
 
-    async def _send_devantech(self, state: str, ip: str, port: int,
-                               c: dict) -> bool:
-        """
-        Devantech ETH Relay Binärprotokoll:
-          Byte 1: 0x21 = "Set all relay states"
-          Byte 2: Bitmask  (Bit 0 = Relais 1, Bit 1 = Relais 2, ...)
+    # ── HTTP Protokoll ────────────────────────────────────────────────────────
 
-        Relais 6 → Bit 5 → Maske 0x20
-        """
-        relay_red   = max(1, min(8, int(c.get("ampel_relay_red",   1))))
-        relay_green = max(1, min(8, int(c.get("ampel_relay_green", 6))))
+    def _credentials(self, c: dict) -> str:
+        u = c.get("ampel_username", "admin")
+        p = c.get("ampel_password", "")
+        return base64.b64encode(f"{u}:{p}".encode()).decode()
 
-        if state == "off":
-            mask = 0x00
-        elif state == "red":
-            mask = 1 << (relay_red - 1)
-        elif state == "green":
-            mask = 1 << (relay_green - 1)
-        else:
-            return False
-
-        cmd = bytes([0x21, mask])
-        self.last_cmd = f"0x21 0x{mask:02X}  (state={state}, relay_r={relay_red}, relay_g={relay_green})"
-
+    async def _http_get(self, path: str, ip: str, port: int,
+                         creds: str) -> str | None:
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {ip}\r\n"
+            f"Authorization: Basic {creds}\r\n"
+            f"Connection: close\r\n\r\n"
+        )
         try:
-            _, writer = await asyncio.wait_for(
+            reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, port), timeout=3.0
             )
-            writer.write(cmd)
+            writer.write(request.encode())
             await writer.drain()
+            response = b""
+            try:
+                response = await asyncio.wait_for(reader.read(1024), timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
             writer.close()
             try:
                 await writer.wait_closed()
             except Exception:
                 pass
-            print(f"[ampel] ✓ {state} → {ip}:{port}  {self.last_cmd}")
-            return True
+            return response.decode("utf-8", errors="replace")
         except Exception as exc:
-            print(f"[ampel] ✗ {state} → {ip}:{port}: {exc}  cmd={self.last_cmd}")
+            print(f"[ampel] HTTP {path}: {exc}")
+            return None
+
+    async def _get_relay_states(self, ip: str, port: int,
+                                 creds: str) -> dict[int, int] | None:
+        """Liest /status.xml und gibt {relay_idx: 0|1} zurück."""
+        resp = await self._http_get("/status.xml", ip, port, creds)
+        if resp is None:
+            return None
+        states: dict[int, int] = {}
+        for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
+            states[int(m.group(1))] = int(m.group(2))
+        return states
+
+    async def _toggle(self, relay_idx: int, ip: str, port: int,
+                       creds: str) -> bool:
+        """Toggelt ein einzelnes Relais."""
+        resp = await self._http_get(f"/io.cgi?relay={relay_idx}",
+                                     ip, port, creds)
+        if resp is None:
             return False
+        status_line = resp.split("\r\n")[0] if resp else ""
+        return "200" in status_line
+
+    async def _send_http(self, state: str, ip: str, port: int,
+                          c: dict) -> bool:
+        """
+        Status lesen → für jedes betroffene Relais:
+        nur toggeln wenn aktueller Zustand ≠ gewünschter Zustand.
+        """
+        # Web-UI Nummer (1-basiert) → 0-basierter Index
+        relay_red_idx   = max(0, min(7, int(c.get("ampel_relay_red",   4)) - 1))
+        relay_green_idx = max(0, min(7, int(c.get("ampel_relay_green", 6)) - 1))
+
+        if state == "off":
+            want = {relay_red_idx: 0, relay_green_idx: 0}
+        elif state == "red":
+            want = {relay_red_idx: 1, relay_green_idx: 0}
+        elif state == "green":
+            want = {relay_red_idx: 0, relay_green_idx: 1}
+        else:
+            return False
+
+        cmd_parts = [f"relay={k}→{'ON' if v else 'OFF'}" for k, v in want.items()]
+        self.last_cmd = f"{state}: " + ", ".join(cmd_parts)
+
+        creds = self._credentials(c)
+
+        # Aktuellen Status lesen
+        current = await self._get_relay_states(ip, port, creds)
+        if current is None:
+            print(f"[ampel] ✗ status.xml nicht erreichbar")
+            return False
+
+        # Nur toggeln wenn nötig
+        ok = True
+        for relay_idx, desired in want.items():
+            if current.get(relay_idx, 0) != desired:
+                toggled = await self._toggle(relay_idx, ip, port, creds)
+                if not toggled:
+                    ok = False
+                    print(f"[ampel] ✗ toggle relay={relay_idx} fehlgeschlagen")
+                else:
+                    print(f"[ampel] ✓ relay={relay_idx} → {'ON' if desired else 'OFF'}")
+
+        if ok:
+            print(f"[ampel] ✓ {state}  ({self.last_cmd})")
+        return ok
 
     # ── Status ────────────────────────────────────────────────────────────────
 
     def status_dict(self) -> dict:
         c = cfg.get()
         return {
-            "state":        self.state,
-            "enabled":      bool(c.get("ampel_enabled", False)),
-            "ok":           self.last_ok,
-            "ts":           self.last_sent,
-            "last_cmd":     self.last_cmd,
-            "relay_red":    int(c.get("ampel_relay_red",   1)),
-            "relay_green":  int(c.get("ampel_relay_green", 6)),
+            "state":       self.state,
+            "enabled":     bool(c.get("ampel_enabled", False)),
+            "ok":          self.last_ok,
+            "ts":          self.last_sent,
+            "last_cmd":    self.last_cmd,
+            "relay_red":   int(c.get("ampel_relay_red",   4)),
+            "relay_green": int(c.get("ampel_relay_green", 6)),
         }
 
 

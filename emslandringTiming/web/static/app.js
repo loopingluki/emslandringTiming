@@ -305,6 +305,14 @@ function updateDecoderStatus(d) {
 
 function updateAmpelDebug(d) {
   if (!d) return;
+
+  // ── Footer indicators ──
+  const barRed   = document.getElementById('ampel-bar-red');
+  const barGreen = document.getElementById('ampel-bar-green');
+  if (barRed)   barRed.classList.toggle('lit',   d.state === 'red');
+  if (barGreen) barGreen.classList.toggle('lit', d.state === 'green');
+
+  // ── Debug panel ──
   const redEl   = document.getElementById('debug-ampel-red');
   const greenEl = document.getElementById('debug-ampel-green');
   const label   = document.getElementById('debug-ampel-state-label');
@@ -1282,10 +1290,13 @@ async function loadSettings() {
   document.getElementById('s-emulator-port').value= s.emulator_port;
 
   document.getElementById('s-ampel-ip').value           = s.ampel_ip || '192.168.178.128';
-  document.getElementById('s-ampel-port').value         = s.ampel_port || 17494;
+  document.getElementById('s-ampel-port').value         = s.ampel_port || 80;
+  document.getElementById('s-ampel-username').value     = s.ampel_username || 'admin';
+  document.getElementById('s-ampel-password').value     = s.ampel_password || '';
   document.getElementById('s-ampel-enabled').checked    = !!s.ampel_enabled;
-  document.getElementById('s-ampel-relay-red').value    = s.ampel_relay_red   ?? 1;
-  document.getElementById('s-ampel-relay-green').value  = s.ampel_relay_green ?? 2;
+  document.getElementById('s-ampel-relay-red').value    = s.ampel_relay_red   ?? 4;
+  document.getElementById('s-ampel-relay-green').value  = s.ampel_relay_green ?? 6;
+  document.getElementById('ampel-settings-grid')?.classList.add('hw-locked');
 
   // Emulator enable state
   const emuCb  = document.getElementById('debug-emulator-enabled');
@@ -1328,9 +1339,11 @@ document.getElementById('btn-unlock-hw').addEventListener('click', () => {
                  'führen, dass die Zeitnahme nicht mehr funktioniert.\n\n' +
                  'Bist du sicher, dass du weißt, was du tust?')) return;
     grid.classList.remove('hw-locked');
+    document.getElementById('ampel-settings-grid')?.classList.remove('hw-locked');
     btn.textContent = '🔓 Gesperrt';
   } else {
     grid.classList.add('hw-locked');
+    document.getElementById('ampel-settings-grid')?.classList.add('hw-locked');
     btn.textContent = '🔒 Entsperren';
   }
 });
@@ -1387,10 +1400,12 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     network_printers:      (document.getElementById('s-network-printers').value || '')
                              .split('\n').map(s => s.trim()).filter(Boolean),
     ampel_ip:           document.getElementById('s-ampel-ip').value,
-    ampel_port:         +document.getElementById('s-ampel-port').value || 17494,
+    ampel_port:         +document.getElementById('s-ampel-port').value || 80,
+    ampel_username:     document.getElementById('s-ampel-username').value || 'admin',
+    ampel_password:     document.getElementById('s-ampel-password').value,
     ampel_enabled:      document.getElementById('s-ampel-enabled').checked,
-    ampel_relay_red:    +document.getElementById('s-ampel-relay-red').value   || 1,
-    ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 2,
+    ampel_relay_red:    +document.getElementById('s-ampel-relay-red').value   || 4,
+    ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 6,
   };
   await fetch('/api/settings', {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1846,6 +1861,65 @@ async function _sendAmpel(state) {
 document.getElementById('btn-ampel-off')  ?.addEventListener('click', () => _sendAmpel('off'));
 document.getElementById('btn-ampel-green')?.addEventListener('click', () => _sendAmpel('green'));
 document.getElementById('btn-ampel-red')  ?.addEventListener('click', () => _sendAmpel('red'));
+
+// ── Ampel Ablauf Modal ────────────────────────────────────────────────────────
+
+const AMPEL_SEQ_OPTIONS = [
+  { value: 'none',  label: '— keine Änderung —' },
+  { value: 'off',   label: '⬛ AUS' },
+  { value: 'green', label: '🟢 GRÜN' },
+  { value: 'red',   label: '🔴 ROT' },
+];
+
+const AMPEL_SEQ_FIELDS = [
+  { id: 'seq-training-arm',    key: 'ampel_seq_training_arm' },
+  { id: 'seq-training-start',  key: 'ampel_seq_training_start' },
+  { id: 'seq-training-finish', key: 'ampel_seq_training_finish' },
+  { id: 'seq-gp-start',        key: 'ampel_seq_gp_start' },
+  { id: 'seq-gp-finish',       key: 'ampel_seq_gp_finish' },
+  { id: 'seq-done',            key: 'ampel_seq_done' },
+  { id: 'seq-disarm',          key: 'ampel_seq_disarm' },
+];
+
+// Populate all sequence dropdowns once
+document.querySelectorAll('.ampel-seq-sel').forEach(sel => {
+  sel.innerHTML = AMPEL_SEQ_OPTIONS.map(o =>
+    `<option value="${o.value}">${o.label}</option>`
+  ).join('');
+});
+
+async function openAmpelSeqModal() {
+  const s = await fetch('/api/settings').then(r => r.json()).catch(() => ({}));
+  AMPEL_SEQ_FIELDS.forEach(f => {
+    const el = document.getElementById(f.id);
+    if (el) el.value = s[f.key] || 'none';
+  });
+  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('modal-ampel-seq').style.display = '';
+}
+
+document.getElementById('btn-ampel-seq')?.addEventListener('click', openAmpelSeqModal);
+
+document.getElementById('seq-cancel')?.addEventListener('click', () => {
+  document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal-ampel-seq').style.display = 'none';
+});
+
+document.getElementById('seq-save')?.addEventListener('click', async () => {
+  const body = {};
+  AMPEL_SEQ_FIELDS.forEach(f => {
+    const el = document.getElementById(f.id);
+    if (el) body[f.key] = el.value;
+  });
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal-ampel-seq').style.display = 'none';
+  showToast('✓ Ampel-Ablauf gespeichert', 'ok');
+});
 
 // Ampel: Enable-Toggle speichert in Config
 document.getElementById('debug-ampel-enabled')?.addEventListener('change', async e => {

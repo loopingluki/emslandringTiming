@@ -755,6 +755,40 @@ tr.lap-detail td { padding: 0; background: var(--bg); }
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+#ampel-bar-indicators {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ampel-bar-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.ampel-bar-dot-red {
+  background: #3a0000;
+  border-color: #600;
+  box-shadow: none;
+}
+.ampel-bar-dot-red.lit {
+  background: #e53935;
+  border-color: #ff6659;
+  box-shadow: 0 0 6px #e53935;
+}
+.ampel-bar-dot-green {
+  background: #003a00;
+  border-color: #060;
+  box-shadow: none;
+}
+.ampel-bar-dot-green.lit {
+  background: #43a047;
+  border-color: #76d275;
+  box-shadow: 0 0 6px #43a047;
+}
 
 /* ─── Context Menu ───────────────────────────────────────────────────────── */
 #ctx-menu {

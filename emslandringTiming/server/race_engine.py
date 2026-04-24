@@ -156,7 +156,7 @@ class RaceEngine:
         self.karts = {}
         await database.update_run(old_run_id, status="pending")
         await hub.broadcast({"type": "run_state", "status": "none"})
-        await ampel.send("off")
+        await self._ampel_seq("ampel_seq_disarm")
         await self._broadcast_run_list_update()
 
     async def start_gp(self) -> None:
@@ -300,7 +300,11 @@ class RaceEngine:
         await emulator.session_start(self.run_id, group)
 
         self._timer_task = asyncio.create_task(self._timer_loop(), name="timer")
-        await ampel.send("green")
+        mode = self.run["mode"]
+        if mode in ("gp_time", "gp_laps"):
+            await self._ampel_seq("ampel_seq_gp_start")
+        else:
+            await self._ampel_seq("ampel_seq_training_start")
         await self._broadcast_run_state()
         await self._broadcast_run_list_update()
 
@@ -337,7 +341,7 @@ class RaceEngine:
             for k in self.karts.values():
                 k.seen_after_finish = False
             wait = cfg.get()["wait_time_sec"]
-            await ampel.send("red")
+            await self._ampel_seq("ampel_seq_training_finish")
         else:
             # Grand Prix: erst auf Führenden warten
             self._finish_phase = "waiting_leader"
@@ -359,7 +363,7 @@ class RaceEngine:
         if leader.seen_after_finish:
             # Führender hat Linie überquert → Finish-Signal, warte auf alle
             await emulator.session_finish()
-            await ampel.send("red")
+            await self._ampel_seq("ampel_seq_gp_finish")
             self._finish_phase = "waiting_others"
             for k in self.karts.values():
                 k.seen_after_finish = False
@@ -405,7 +409,7 @@ class RaceEngine:
 
     async def _finalize(self) -> None:
         await self._cancel_tasks()
-        await ampel.send("off")
+        await self._ampel_seq("ampel_seq_done")
         mode = self.run["mode"] if self.run else "training"
 
         if self.status not in ("finishing",):
@@ -518,6 +522,10 @@ class RaceEngine:
                 await self._finish_task
             except asyncio.CancelledError:
                 pass
+
+    async def _ampel_seq(self, key: str) -> None:
+        """Sendet den konfigurierten Ampel-Zustand für ein Ereignis."""
+        await ampel.send_seq(key)
 
     def snapshot(self) -> dict:
         sorted_karts = self._sorted_karts()
