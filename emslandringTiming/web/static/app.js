@@ -337,8 +337,11 @@ function updateAmpelDebug(d) {
   }
   if (okLbl) {
     if (d.ok === true)        okLbl.textContent = d.forced ? '✓ Gesendet (manuell)' : '✓ Gesendet';
-    else if (d.ok === false)  okLbl.textContent = '✗ Fehler – TCP fehlgeschlagen';
-    else if (d.ok === null && !d.enabled) okLbl.textContent = 'deaktiviert (kein TCP)';
+    else if (d.ok === false) {
+      const errDetail = d.last_err ? ` (${d.last_err})` : '';
+      okLbl.textContent = `✗ Relaismodul nicht erreichbar${errDetail}`;
+    }
+    else if (d.ok === null && !d.enabled) okLbl.textContent = '(Senden deaktiviert)';
     else                      okLbl.textContent = '';
     okLbl.style.color = d.ok === true ? 'var(--green)' : d.ok === false ? 'var(--red)' : 'var(--text-muted)';
   }
@@ -1269,6 +1272,8 @@ async function loadSettings() {
   if (hwGrid) hwGrid.classList.add('hw-locked');
   const unlockBtn = document.getElementById('btn-unlock-hw');
   if (unlockBtn) unlockBtn.textContent = '🔒 Entsperren';
+  const seqBtn = document.getElementById('btn-ampel-seq');
+  if (seqBtn) { seqBtn.disabled = true; seqBtn.style.opacity = '0.45'; }
 
   const trainSec = s.training_duration_sec || 420;
   document.getElementById('s-train-h').value = Math.floor(trainSec / 3600);
@@ -1333,6 +1338,7 @@ document.getElementById('s-zoom').addEventListener('input', e => applyZoom(e.tar
 document.getElementById('btn-unlock-hw').addEventListener('click', () => {
   const grid = document.getElementById('hw-settings-grid');
   const btn  = document.getElementById('btn-unlock-hw');
+  const seqBtn2 = document.getElementById('btn-ampel-seq');
   if (grid.classList.contains('hw-locked')) {
     if (!confirm('⚠ KRITISCHE EINSTELLUNGEN\n\n' +
                  'Änderungen an Decoder-IP, Ports und Netzwerk können dazu ' +
@@ -1341,10 +1347,12 @@ document.getElementById('btn-unlock-hw').addEventListener('click', () => {
     grid.classList.remove('hw-locked');
     document.getElementById('ampel-settings-grid')?.classList.remove('hw-locked');
     btn.textContent = '🔓 Gesperrt';
+    if (seqBtn2) { seqBtn2.disabled = false; seqBtn2.style.opacity = ''; }
   } else {
     grid.classList.add('hw-locked');
     document.getElementById('ampel-settings-grid')?.classList.add('hw-locked');
     btn.textContent = '🔒 Entsperren';
+    if (seqBtn2) { seqBtn2.disabled = true; seqBtn2.style.opacity = '0.45'; }
   }
 });
 
@@ -1889,21 +1897,22 @@ document.querySelectorAll('.ampel-seq-sel').forEach(sel => {
 });
 
 async function openAmpelSeqModal() {
+  // Gesperrt prüfen
+  if (document.getElementById('ampel-settings-grid')?.classList.contains('hw-locked')) {
+    alert('Bitte zuerst die Hardware-Einstellungen entsperren (🔒 Entsperren).');
+    return;
+  }
   const s = await fetch('/api/settings').then(r => r.json()).catch(() => ({}));
   AMPEL_SEQ_FIELDS.forEach(f => {
     const el = document.getElementById(f.id);
     if (el) el.value = s[f.key] || 'none';
   });
-  document.getElementById('modal-overlay').style.display = 'flex';
-  document.getElementById('modal-ampel-seq').style.display = '';
+  showModal('modal-ampel-seq');
 }
 
 document.getElementById('btn-ampel-seq')?.addEventListener('click', openAmpelSeqModal);
 
-document.getElementById('seq-cancel')?.addEventListener('click', () => {
-  document.getElementById('modal-overlay').style.display = 'none';
-  document.getElementById('modal-ampel-seq').style.display = 'none';
-});
+document.getElementById('seq-cancel')?.addEventListener('click', () => closeModal());
 
 document.getElementById('seq-save')?.addEventListener('click', async () => {
   const body = {};
@@ -1916,8 +1925,7 @@ document.getElementById('seq-save')?.addEventListener('click', async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  document.getElementById('modal-overlay').style.display = 'none';
-  document.getElementById('modal-ampel-seq').style.display = 'none';
+  closeModal();
   showToast('✓ Ampel-Ablauf gespeichert', 'ok');
 });
 

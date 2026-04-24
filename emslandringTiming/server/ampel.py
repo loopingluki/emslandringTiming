@@ -41,6 +41,7 @@ class AmpelController:
         self.last_ok: bool | None = None
         self.last_sent: float = 0.0
         self.last_cmd: str = ""
+        self.last_err: str = ""
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ class AmpelController:
             "ok":       ok,
             "ts":       self.last_sent,
             "last_cmd": self.last_cmd,
+            "last_err": self.last_err if ok is False else "",
         })
         return ok is not False
 
@@ -116,6 +118,7 @@ class AmpelController:
                 pass
             return response.decode("utf-8", errors="replace")
         except Exception as exc:
+            self.last_err = str(exc)
             print(f"[ampel] HTTP {path}: {exc}")
             return None
 
@@ -195,6 +198,7 @@ class AmpelController:
             "ok":          self.last_ok,
             "ts":          self.last_sent,
             "last_cmd":    self.last_cmd,
+            "last_err":    self.last_err,
             "relay_red":   int(c.get("ampel_relay_red",   4)),
             "relay_green": int(c.get("ampel_relay_green", 6)),
         }
