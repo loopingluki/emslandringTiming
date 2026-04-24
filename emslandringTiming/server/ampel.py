@@ -29,10 +29,21 @@ Ablauf-Sequenz (config.json):
 """
 import asyncio
 import base64
+import os
 import re
 import time
 
 import config as cfg
+
+
+# Env ohne Proxy-Variablen – falls im System/Service HTTP_PROXY o.ä. gesetzt ist,
+# würde curl versuchen darüber zu gehen und das erklärt Timeouts.
+_NO_PROXY_ENV = {k: v for k, v in os.environ.items()
+                 if k.lower() not in (
+                     "http_proxy", "https_proxy", "all_proxy",
+                     "ftp_proxy", "no_proxy")}
+_NO_PROXY_ENV["no_proxy"] = "*"
+_NO_PROXY_ENV["NO_PROXY"] = "*"
 
 
 class AmpelController:
@@ -125,12 +136,14 @@ class AmpelController:
                     "curl",
                     "-sS",
                     "--http0.9",
+                    "--noproxy", "*",            # jeglichen Proxy umgehen
                     "--connect-timeout", "2",
                     "--max-time", "3",
                     "-u", f"{username}:{password}",
                     url,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=_NO_PROXY_ENV,
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
                 out_txt = stdout.decode("utf-8", errors="replace")
