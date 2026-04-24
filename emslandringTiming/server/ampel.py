@@ -47,7 +47,6 @@ class AmpelController:
         self.last_sent: float = 0.0
         self.last_cmd: str = ""
         self.last_err: str = ""
-        self._lock = asyncio.Lock()           # serialisiert HTTP-Requests
         self._poll_task: asyncio.Task | None = None
         self._last_states: dict[int, int] | None = None
         self._last_states_ts: float = 0.0
@@ -110,63 +109,45 @@ class AmpelController:
     # ── HTTP/1.0 raw asyncio ──────────────────────────────────────────────────
 
     async def _http_get(self, path: str, ip: str, port: int,
-                         username: str, password: str,
-                         attempts: int = 3) -> str | None:
+                         username: str, password: str) -> str | None:
         """
         HTTP-GET via curl-Subprozess (HTTP/0.9 support für Relay-Board).
-        Retry bei Timeout – das Board ist manchmal kurz unerreichbar nach
-        einem Toggle. Durch _lock serialisiert, damit Polling und aktive
-        Sends nicht parallel aufs Board zugreifen.
+        Ein Versuch, kurzer Timeout – so wie die Weboberfläche es auch macht.
+        Status-Polling läuft parallel und korrigiert die UI falls was schief geht.
         """
-        async with self._lock:
-            return await self._http_get_locked(path, ip, port, username, password, attempts)
-
-    async def _http_get_locked(self, path: str, ip: str, port: int,
-                                username: str, password: str,
-                                attempts: int) -> str | None:
         url = f"http://{ip}:{port}{path}"
-        for attempt in range(1, attempts + 1):
-            print(f"[ampel] curl -> {url} (Versuch {attempt}/{attempts})")
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "curl",
-                    "-sS",
-                    "--http0.9",
-                    "--max-time", "8",
-                    "-u", f"{username}:{password}",
-                    url,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-                out_txt = stdout.decode("utf-8", errors="replace")
-                err_txt = stderr.decode("utf-8", errors="replace").strip()
-                if proc.returncode == 0:
-                    return out_txt
-                # Retry bei Timeout (28) oder Connection refused (7)
-                if proc.returncode in (7, 28) and attempt < attempts:
-                    print(f"[ampel] curl exit={proc.returncode}, retry in 500ms")
-                    await asyncio.sleep(0.5)
-                    continue
-                detail = err_txt or out_txt[:120] or "keine Ausgabe"
-                self.last_err = f"curl exit={proc.returncode}: {detail}"
-                print(f"[ampel] curl exit={proc.returncode} stderr={err_txt!r}")
-                return None
-            except asyncio.TimeoutError:
-                if attempt < attempts:
-                    print(f"[ampel] communicate() Timeout, retry")
-                    await asyncio.sleep(0.5)
-                    continue
-                self.last_err = "curl-Timeout (Prozess)"
-                return None
-            except FileNotFoundError:
-                self.last_err = "curl nicht installiert (apt install curl)"
-                return None
-            except Exception as exc:
-                self.last_err = str(exc)
-                print(f"[ampel] curl Fehler: {exc}")
-                return None
-        return None
+        print(f"[ampel] curl -> {url}")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "curl",
+                "-sS",
+                "--http0.9",
+                "--connect-timeout", "2",    # 2s für TCP-Handshake
+                "--max-time", "3",            # 3s gesamt (Board ist schnell wenn OK)
+                "-u", f"{username}:{password}",
+                url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            out_txt = stdout.decode("utf-8", errors="replace")
+            err_txt = stderr.decode("utf-8", errors="replace").strip()
+            if proc.returncode == 0:
+                return out_txt
+            detail = err_txt or "keine Ausgabe"
+            self.last_err = f"curl exit={proc.returncode}: {detail}"
+            print(f"[ampel] curl exit={proc.returncode}: {err_txt}")
+            return None
+        except asyncio.TimeoutError:
+            self.last_err = "curl-Prozess blockiert"
+            return None
+        except FileNotFoundError:
+            self.last_err = "curl nicht installiert (apt install curl)"
+            return None
+        except Exception as exc:
+            self.last_err = str(exc)
+            print(f"[ampel] curl Fehler: {exc}")
+            return None
 
     async def _get_relay_states(self, ip: str, port: int,
                                  username: str, password: str) -> dict[int, int] | None:
@@ -219,36 +200,28 @@ class AmpelController:
         username = c.get("ampel_username", "admin")
         password = c.get("ampel_password", "")
 
-        # Aktuellen Status: Cache nutzen wenn frisch (Poll-Ergebnis), sonst frisch lesen
-        now = time.time()
-        if (self._last_states is not None
-                and (now - self._last_states_ts) < self.STATES_CACHE_MAX_AGE):
-            current = self._last_states
-            print(f"[ampel] ✓ Status aus Cache (Alter {now - self._last_states_ts:.1f}s)")
-        else:
+        # Cache nutzen wenn vorhanden (von Poll oder vorherigem Send)
+        # Nur wenn absolut kein Cache existiert, einmal lesen
+        current = self._last_states
+        if current is None:
             current = await self._get_relay_states(ip, port, username, password)
             if current is None:
                 print(f"[ampel] ✗ status.xml nicht lesbar")
                 return False
 
-        # Nur toggeln wenn nötig – mit kleiner Pause zwischen Requests
+        # Feuer-und-Vergiss: alle nötigen Toggles schnell hintereinander
         ok = True
-        first = True
         for relay_idx, desired in want.items():
             if current.get(relay_idx, 0) != desired:
-                if not first:
-                    await asyncio.sleep(0.2)   # Pause zwischen Toggles
-                first = False
                 toggled = await self._toggle(relay_idx, ip, port, username, password)
                 if not toggled:
                     ok = False
                     print(f"[ampel] ✗ toggle relay={relay_idx} fehlgeschlagen")
                 else:
                     print(f"[ampel] ✓ relay={relay_idx} → {'ON' if desired else 'OFF'}")
-                    # Cache aktualisieren (vermeidet Extra-Reads bei nachfolgenden Sends)
-                    if self._last_states is not None:
-                        self._last_states = {**self._last_states, relay_idx: desired}
-                        self._last_states_ts = time.time()
+                    # Cache sofort aktualisieren
+                    self._last_states = {**(self._last_states or {}), relay_idx: desired}
+                    self._last_states_ts = time.time()
 
         if ok:
             print(f"[ampel] ✓ {state}  ({self.last_cmd})")
@@ -290,10 +263,8 @@ class AmpelController:
                 username = c.get("ampel_username", "admin")
                 password = c.get("ampel_password", "")
 
-                # Poll nutzt weniger aggressive Retries (1 Versuch statt 3)
-                async with self._lock:
-                    resp = await self._http_get_locked(
-                        "/status.xml", ip, port, username, password, attempts=1)
+                resp = await self._http_get(
+                    "/status.xml", ip, port, username, password)
 
                 if resp:
                     states: dict[int, int] = {}
