@@ -37,7 +37,9 @@ import config as cfg
 
 class AmpelController:
     # Polling-Intervall in Sekunden (wie oft /status.xml abgefragt wird)
-    POLL_INTERVAL = 5.0
+    POLL_INTERVAL        = 10.0    # normal
+    POLL_INTERVAL_ERROR  = 20.0    # nach Fehler (Board entlasten)
+    STATES_CACHE_MAX_AGE = 12.0    # Poll-Ergebnis so lange für Sends nutzen
 
     def __init__(self) -> None:
         self.state: str = "off"
@@ -45,8 +47,10 @@ class AmpelController:
         self.last_sent: float = 0.0
         self.last_cmd: str = ""
         self.last_err: str = ""
-        self._lock = asyncio.Lock()          # serialisiert HTTP-Requests
+        self._lock = asyncio.Lock()           # serialisiert HTTP-Requests
         self._poll_task: asyncio.Task | None = None
+        self._last_states: dict[int, int] | None = None
+        self._last_states_ts: float = 0.0
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -174,11 +178,13 @@ class AmpelController:
         for m in re.finditer(r"<relay(\d+)>(\d+)</relay\d+>", resp):
             states[int(m.group(1))] = int(m.group(2))
         if not states:
-            # repr() zeigt alle Bytes inkl. nicht-druckbarer Zeichen
             snippet = repr(resp[:250])
             self.last_err = f"Kein Relay-XML ({len(resp)} Bytes): {snippet}"
             print(f"[ampel] status.xml: kein relay-XML. Länge={len(resp)}, Antwort={resp[:500]!r}")
             return None
+        # Cache füttern
+        self._last_states    = states
+        self._last_states_ts = time.time()
         return states
 
     async def _toggle(self, relay_idx: int, ip: str, port: int,
@@ -213,11 +219,17 @@ class AmpelController:
         username = c.get("ampel_username", "admin")
         password = c.get("ampel_password", "")
 
-        # Aktuellen Status lesen
-        current = await self._get_relay_states(ip, port, username, password)
-        if current is None:
-            print(f"[ampel] ✗ status.xml nicht lesbar")
-            return False
+        # Aktuellen Status: Cache nutzen wenn frisch (Poll-Ergebnis), sonst frisch lesen
+        now = time.time()
+        if (self._last_states is not None
+                and (now - self._last_states_ts) < self.STATES_CACHE_MAX_AGE):
+            current = self._last_states
+            print(f"[ampel] ✓ Status aus Cache (Alter {now - self._last_states_ts:.1f}s)")
+        else:
+            current = await self._get_relay_states(ip, port, username, password)
+            if current is None:
+                print(f"[ampel] ✗ status.xml nicht lesbar")
+                return False
 
         # Nur toggeln wenn nötig – mit kleiner Pause zwischen Requests
         ok = True
@@ -233,6 +245,10 @@ class AmpelController:
                     print(f"[ampel] ✗ toggle relay={relay_idx} fehlgeschlagen")
                 else:
                     print(f"[ampel] ✓ relay={relay_idx} → {'ON' if desired else 'OFF'}")
+                    # Cache aktualisieren (vermeidet Extra-Reads bei nachfolgenden Sends)
+                    if self._last_states is not None:
+                        self._last_states = {**self._last_states, relay_idx: desired}
+                        self._last_states_ts = time.time()
 
         if ok:
             print(f"[ampel] ✓ {state}  ({self.last_cmd})")
@@ -255,13 +271,15 @@ class AmpelController:
         """
         Fragt periodisch /status.xml ab und broadcastet Änderungen.
         So bekommen wir mit, wenn externe Programme (MyLaps, Taster am
-        Modul) die Relais umschalten.
+        Modul) die Relais umschalten. Bei Fehlern längerer Backoff,
+        um das Board zu entlasten.
         """
         from ws_hub import hub
 
         # Etwas verzögern, damit uvicorn erst startet
         await asyncio.sleep(2.0)
         while True:
+            poll_ok = True
             try:
                 c = cfg.get()
                 ip = c.get("ampel_ip", "").strip()
@@ -284,12 +302,17 @@ class AmpelController:
                     if states:
                         new_state = self._derive_state(states, c)
                         reachable = True
+                        # Cache füttern für nachfolgende Sends
+                        self._last_states    = states
+                        self._last_states_ts = time.time()
                     else:
                         new_state = self.state
                         reachable = False
+                        poll_ok = False
                 else:
                     new_state = self.state
                     reachable = False
+                    poll_ok = False
 
                 # Nur broadcasten bei Änderung (State oder Erreichbarkeit)
                 state_changed = new_state != self.state
@@ -315,7 +338,9 @@ class AmpelController:
                 break
             except Exception as exc:
                 print(f"[ampel] Poll-Loop Fehler: {exc}")
-            await asyncio.sleep(self.POLL_INTERVAL)
+                poll_ok = False
+            # Bei Fehler längerer Backoff, sonst normales Intervall
+            await asyncio.sleep(self.POLL_INTERVAL if poll_ok else self.POLL_INTERVAL_ERROR)
 
     # ── Status ────────────────────────────────────────────────────────────────
 
