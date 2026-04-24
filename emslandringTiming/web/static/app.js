@@ -143,6 +143,8 @@ function connectWs() {
   ws.onopen = () => {
     state.wsOk = true;
     _wsRetry = 1000;
+    // Sofort "VERBINDE..." entfernen, sobald WS steht
+    updateDecoderStatus(state.decoder);
   };
 
   ws.onmessage = e => {
@@ -165,6 +167,8 @@ function handleMsg(msg) {
 
     case 'snapshot':
       state.decoder = msg.decoder || state.decoder;
+      // Decoder-Status zuerst aktualisieren – damit er auch bei späterem Fehler sichtbar ist
+      updateDecoderStatus(state.decoder);
       if (msg.runs_today) {
         state.runs = msg.runs_today;
         renderRunList();
@@ -178,7 +182,6 @@ function handleMsg(msg) {
         renderKartTable();
       }
       updateRunHeader();
-      updateDecoderStatus(msg.decoder);
       updateFloatTimer();
       break;
 
