@@ -88,68 +88,42 @@ class AmpelController:
     # ── HTTP/1.0 raw asyncio ──────────────────────────────────────────────────
 
     async def _http_get(self, path: str, ip: str, port: int,
-                         username: str, password: str,
-                         attempts: int = 3) -> str | None:
+                         username: str, password: str) -> str | None:
         """
-        HTTP/1.0 GET mit Basic Auth und curl-kompatiblen Headern.
-        Retry bei kaputter Response (manche Boards reagieren auf den ersten
-        Request nach TCP-Idle mit Garbage).
+        HTTP-GET via curl-Subprozess.
+        Das Relay-Board antwortet auf direkte asyncio/urllib-Requests mit Garbage,
+        aber auf curl-Requests korrekt. curl ist auf jedem Linux-System vorhanden.
         """
-        creds = base64.b64encode(f"{username}:{password}".encode()).decode()
-        # Header wie curl – manche Boards verlangen User-Agent & Accept
-        request = (
-            f"GET {path} HTTP/1.0\r\n"
-            f"Host: {ip}\r\n"
-            f"User-Agent: curl/7.88.1\r\n"
-            f"Accept: */*\r\n"
-            f"Authorization: Basic {creds}\r\n"
-            f"\r\n"
-        ).encode()
-
-        last_data = b""
-        for attempt in range(1, attempts + 1):
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(ip, port), timeout=5.0
-                )
-                writer.write(request)
-                await writer.drain()
-                data = b""
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(reader.read(4096), timeout=2.0)
-                        if not chunk:
-                            break
-                        data += chunk
-                        if b"</response>" in data or b"</html>" in data:
-                            break
-                    except asyncio.TimeoutError:
-                        break
-                writer.close()
-                try:
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-                last_data = data
-                # Plausibilitätscheck: HTTP-Antwort oder XML-Tag
-                if data and (b"HTTP/" in data[:20] or b"<" in data[:20]):
-                    return data.decode("utf-8", errors="replace")
-                print(f"[ampel] Versuch {attempt}/{attempts}: kaputte Antwort {data[:50]!r}, retry...")
-                await asyncio.sleep(0.3)
-            except asyncio.TimeoutError:
-                self.last_err = f"Verbindungs-Timeout ({ip}:{port})"
-                print(f"[ampel] Verbindungs-Timeout {ip}:{port}")
+        url = f"http://{ip}:{port}{path}"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "curl",
+                "-s",                         # silent
+                "--max-time", "5",            # 5s Gesamt-Timeout
+                "-u", f"{username}:{password}",
+                url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=7.0)
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace").strip()[:120]
+                self.last_err = f"curl exit={proc.returncode}: {err or 'kein stderr'}"
+                print(f"[ampel] curl exit={proc.returncode}: {err}")
                 return None
-            except Exception as exc:
-                self.last_err = str(exc)
-                print(f"[ampel] HTTP {path}: {exc}")
-                return None
-
-        # Alle Versuche gescheitert – letzte Antwort zurückgeben für Diagnose
-        if last_data:
-            return last_data.decode("utf-8", errors="replace")
-        self.last_err = "Leere Antwort vom Relaismodul"
-        return None
+            return stdout.decode("utf-8", errors="replace")
+        except asyncio.TimeoutError:
+            self.last_err = "curl-Timeout"
+            print(f"[ampel] curl Timeout")
+            return None
+        except FileNotFoundError:
+            self.last_err = "curl nicht installiert (apt install curl)"
+            print(f"[ampel] curl nicht gefunden")
+            return None
+        except Exception as exc:
+            self.last_err = str(exc)
+            print(f"[ampel] curl Fehler: {exc}")
+            return None
 
     async def _get_relay_states(self, ip: str, port: int,
                                  username: str, password: str) -> dict[int, int] | None:
