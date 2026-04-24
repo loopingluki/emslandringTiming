@@ -328,12 +328,16 @@ function updateAmpelDebug(d) {
     label.style.color = d.state === 'green' ? 'var(--green)' : d.state === 'red' ? 'var(--red)' : 'var(--text-dim)';
   }
   if (okLbl) {
-    if (d.ok === true)       okLbl.textContent = '✓ Gesendet';
-    else if (d.ok === false) okLbl.textContent = '✗ Fehler';
-    else if (!d.enabled)     okLbl.textContent = 'deaktiviert';
-    else                     okLbl.textContent = '';
+    if (d.ok === true)        okLbl.textContent = d.forced ? '✓ Gesendet (manuell)' : '✓ Gesendet';
+    else if (d.ok === false)  okLbl.textContent = '✗ Fehler – TCP fehlgeschlagen';
+    else if (d.ok === null && !d.enabled) okLbl.textContent = 'deaktiviert (kein TCP)';
+    else                      okLbl.textContent = '';
     okLbl.style.color = d.ok === true ? 'var(--green)' : d.ok === false ? 'var(--red)' : 'var(--text-muted)';
   }
+  // Letzten gesendeten Befehl anzeigen
+  const cmdEl = document.getElementById('debug-ampel-cmd');
+  if (cmdEl && d.last_cmd) cmdEl.textContent = d.last_cmd;
+
   if (enabledCb && enabledCb.checked !== d.enabled) enabledCb.checked = d.enabled;
   if (enabledLbl) {
     enabledLbl.textContent = d.enabled ? 'Senden aktiv' : 'Senden deaktiviert';
@@ -1827,12 +1831,16 @@ document.getElementById('btn-debug-clear').addEventListener('click', () => {
 
 // Ampel: manuelle Befehle
 async function _sendAmpel(state) {
+  // force=true: Debug-Buttons senden immer, auch wenn Ampel deaktiviert
   try {
-    await fetch('/api/ampel', {
+    const res = await fetch('/api/ampel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state }),
+      body: JSON.stringify({ state, force: true }),
     });
+    const data = await res.json();
+    const cmdEl = document.getElementById('debug-ampel-cmd');
+    if (cmdEl && data.cmd) cmdEl.textContent = data.cmd;
   } catch(_) {}
 }
 document.getElementById('btn-ampel-off')  ?.addEventListener('click', () => _sendAmpel('off'));

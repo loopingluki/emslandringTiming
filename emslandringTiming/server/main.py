@@ -304,8 +304,10 @@ async def api_ampel_set(body: dict):
     state = body.get("state", "off")
     if state not in ("off", "green", "red"):
         raise HTTPException(400, "Ungültiger Zustand: off | green | red")
-    await ampel.send(state)
-    return {"ok": True, "state": state}
+    # force=True: Debug-Buttons senden immer, egal ob ampel_enabled
+    force = bool(body.get("force", False))
+    await ampel.send(state, force=force)
+    return {"ok": True, "state": state, "cmd": ampel.last_cmd}
 
 
 @app.post("/api/runs/{run_id}/disarm")
