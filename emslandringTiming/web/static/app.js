@@ -306,11 +306,15 @@ function updateDecoderStatus(d) {
 function updateAmpelDebug(d) {
   if (!d) return;
 
+  // State-Helfer: bei 'both' leuchten beide
+  const redOn   = d.state === 'red'   || d.state === 'both';
+  const greenOn = d.state === 'green' || d.state === 'both';
+
   // ── Footer indicators ──
   const barRed   = document.getElementById('ampel-bar-red');
   const barGreen = document.getElementById('ampel-bar-green');
-  if (barRed)   barRed.classList.toggle('lit',   d.state === 'red');
-  if (barGreen) barGreen.classList.toggle('lit', d.state === 'green');
+  if (barRed)   barRed.classList.toggle('lit',   redOn);
+  if (barGreen) barGreen.classList.toggle('lit', greenOn);
 
   // ── Debug panel ──
   const redEl   = document.getElementById('debug-ampel-red');
@@ -321,19 +325,22 @@ function updateAmpelDebug(d) {
   const enabledLbl = document.getElementById('debug-ampel-enabled-label');
 
   if (redEl) {
-    redEl.style.background   = d.state === 'red'   ? '#e53935' : '#3a0000';
-    redEl.style.borderColor  = d.state === 'red'   ? '#ff6659' : '#600';
-    redEl.style.boxShadow    = d.state === 'red'   ? '0 0 10px #e53935' : 'none';
+    redEl.style.background   = redOn ? '#e53935' : '#3a0000';
+    redEl.style.borderColor  = redOn ? '#ff6659' : '#600';
+    redEl.style.boxShadow    = redOn ? '0 0 10px #e53935' : 'none';
   }
   if (greenEl) {
-    greenEl.style.background  = d.state === 'green' ? '#43a047' : '#003a00';
-    greenEl.style.borderColor = d.state === 'green' ? '#76d275' : '#060';
-    greenEl.style.boxShadow   = d.state === 'green' ? '0 0 10px #43a047' : 'none';
+    greenEl.style.background  = greenOn ? '#43a047' : '#003a00';
+    greenEl.style.borderColor = greenOn ? '#76d275' : '#060';
+    greenEl.style.boxShadow   = greenOn ? '0 0 10px #43a047' : 'none';
   }
   if (label) {
-    const map = { off: 'AUS', green: 'GRÜN', red: 'ROT' };
+    const map = { off: 'AUS', green: 'GRÜN', red: 'ROT', both: '⚠ ROT + GRÜN' };
     label.textContent = map[d.state] || d.state;
-    label.style.color = d.state === 'green' ? 'var(--green)' : d.state === 'red' ? 'var(--red)' : 'var(--text-dim)';
+    if (d.state === 'both')      label.style.color = 'var(--orange)';
+    else if (d.state === 'green') label.style.color = 'var(--green)';
+    else if (d.state === 'red')   label.style.color = 'var(--red)';
+    else                          label.style.color = 'var(--text-dim)';
   }
   if (okLbl) {
     if (d.ok === true)        okLbl.textContent = d.forced ? '✓ Gesendet (manuell)' : '✓ Gesendet';
