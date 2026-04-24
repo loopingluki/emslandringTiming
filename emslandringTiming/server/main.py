@@ -296,6 +296,21 @@ async def api_save_settings(body: dict):
     return {"ok": True}
 
 
+@app.post("/api/runs/{run_id}/upload")
+async def api_run_upload(run_id: int):
+    """Manueller Firestore-Upload für einen bereits abgeschlossenen Lauf."""
+    import firebase_sync
+    run = await database.get_run(run_id)
+    if not run:
+        raise HTTPException(404, "Lauf nicht gefunden")
+    if run["status"] != "done":
+        raise HTTPException(400, f"Lauf hat Status '{run['status']}', nur 'done' kann hochgeladen werden")
+    ok = await firebase_sync.sync_run(run_id)
+    if not ok:
+        raise HTTPException(500, "Firebase nicht konfiguriert oder Upload nicht möglich")
+    return {"ok": True, "message": f"Upload für Lauf {run_id} gestartet (läuft im Hintergrund)"}
+
+
 @app.get("/api/ampel")
 async def api_ampel_get():
     return ampel.status_dict()

@@ -234,21 +234,31 @@ async def sync_run(run_id: int) -> bool:
             ),
         }
 
-    # ── In Hintergrund-Thread schreiben ───────────────────────────────────────
+    # ── In Hintergrund-Thread schreiben, mit Retry bei transienten Fehlern ────
     def _write() -> None:
-        try:
-            ref = _db.collection("sessions").document(str(run_id))
-            ref.set(session_doc, timeout=30)
-            for kart_nr, doc in kart_docs.items():
-                ref.collection("kart_details").document(str(kart_nr)).set(
-                    doc, timeout=30
+        # 3 Versuche, exponentieller Backoff: 0s, 5s, 15s
+        for attempt in range(1, 4):
+            try:
+                ref = _db.collection("sessions").document(str(run_id))
+                ref.set(session_doc, timeout=60)
+                for kart_nr, doc in kart_docs.items():
+                    ref.collection("kart_details").document(str(kart_nr)).set(
+                        doc, timeout=60
+                    )
+                print(
+                    f"[firebase_sync] Lauf {run_id} ({run['date']}, "
+                    f"{len(kart_docs)} Karts) → Firestore OK"
+                    + (f" (Versuch {attempt})" if attempt > 1 else "")
                 )
-            print(
-                f"[firebase_sync] Lauf {run_id} ({run['date']}, "
-                f"{len(kart_docs)} Karts) → Firestore OK"
-            )
-        except Exception as exc:
-            print(f"[firebase_sync] Fehler bei Lauf {run_id}: {exc}")
+                return
+            except Exception as exc:
+                if attempt < 3:
+                    wait = 5 * (attempt * attempt - attempt + 1)  # 5, 15
+                    print(f"[firebase_sync] Versuch {attempt} fehlgeschlagen "
+                          f"({exc}), retry in {wait}s")
+                    time.sleep(wait)
+                else:
+                    print(f"[firebase_sync] Fehler bei Lauf {run_id} nach 3 Versuchen: {exc}")
 
     t = threading.Thread(target=_write, daemon=True, name=f"fb-sync-{run_id}")
     t.start()
