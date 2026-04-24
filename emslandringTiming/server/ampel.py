@@ -50,6 +50,8 @@ class AmpelController:
         self._poll_task: asyncio.Task | None = None
         self._last_states: dict[int, int] | None = None
         self._last_states_ts: float = 0.0
+        self._lock = asyncio.Lock()            # serialisiert curl-Prozesse
+        self._last_send_ts: float = 0.0        # Poll skippt direkt nach Send
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -111,43 +113,44 @@ class AmpelController:
     async def _http_get(self, path: str, ip: str, port: int,
                          username: str, password: str) -> str | None:
         """
-        HTTP-GET via curl-Subprozess (HTTP/0.9 support für Relay-Board).
-        Ein Versuch, kurzer Timeout – so wie die Weboberfläche es auch macht.
-        Status-Polling läuft parallel und korrigiert die UI falls was schief geht.
+        HTTP-GET via curl – serialisiert, damit nie zwei parallele Requests
+        aufs Board gehen. Das Devantech-Board blockiert stuck wenn mehrere
+        Verbindungen gleichzeitig reinkommen.
         """
-        url = f"http://{ip}:{port}{path}"
-        print(f"[ampel] curl -> {url}")
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "curl",
-                "-sS",
-                "--http0.9",
-                "--connect-timeout", "2",    # 2s für TCP-Handshake
-                "--max-time", "3",            # 3s gesamt (Board ist schnell wenn OK)
-                "-u", f"{username}:{password}",
-                url,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            out_txt = stdout.decode("utf-8", errors="replace")
-            err_txt = stderr.decode("utf-8", errors="replace").strip()
-            if proc.returncode == 0:
-                return out_txt
-            detail = err_txt or "keine Ausgabe"
-            self.last_err = f"curl exit={proc.returncode}: {detail}"
-            print(f"[ampel] curl exit={proc.returncode}: {err_txt}")
-            return None
-        except asyncio.TimeoutError:
-            self.last_err = "curl-Prozess blockiert"
-            return None
-        except FileNotFoundError:
-            self.last_err = "curl nicht installiert (apt install curl)"
-            return None
-        except Exception as exc:
-            self.last_err = str(exc)
-            print(f"[ampel] curl Fehler: {exc}")
-            return None
+        async with self._lock:
+            url = f"http://{ip}:{port}{path}"
+            print(f"[ampel] curl -> {url}")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "curl",
+                    "-sS",
+                    "--http0.9",
+                    "--connect-timeout", "2",
+                    "--max-time", "3",
+                    "-u", f"{username}:{password}",
+                    url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+                out_txt = stdout.decode("utf-8", errors="replace")
+                err_txt = stderr.decode("utf-8", errors="replace").strip()
+                if proc.returncode == 0:
+                    return out_txt
+                detail = err_txt or "keine Ausgabe"
+                self.last_err = f"curl exit={proc.returncode}: {detail}"
+                print(f"[ampel] curl exit={proc.returncode}: {err_txt}")
+                return None
+            except asyncio.TimeoutError:
+                self.last_err = "curl-Prozess blockiert"
+                return None
+            except FileNotFoundError:
+                self.last_err = "curl nicht installiert (apt install curl)"
+                return None
+            except Exception as exc:
+                self.last_err = str(exc)
+                print(f"[ampel] curl Fehler: {exc}")
+                return None
 
     async def _get_relay_states(self, ip: str, port: int,
                                  username: str, password: str) -> dict[int, int] | None:
@@ -225,6 +228,7 @@ class AmpelController:
 
         if ok:
             print(f"[ampel] ✓ {state}  ({self.last_cmd})")
+        self._last_send_ts = time.time()   # Poll überspringt die nächsten Sekunden
         return ok
 
     # ── Polling ───────────────────────────────────────────────────────────────
@@ -253,6 +257,10 @@ class AmpelController:
         await asyncio.sleep(2.0)
         while True:
             poll_ok = True
+            # Poll überspringen wenn gerade ein Send lief (Board Ruhe gönnen)
+            if time.time() - self._last_send_ts < 3.0:
+                await asyncio.sleep(self.POLL_INTERVAL)
+                continue
             try:
                 c = cfg.get()
                 ip = c.get("ampel_ip", "").strip()
