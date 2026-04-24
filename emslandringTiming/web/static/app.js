@@ -453,7 +453,18 @@ function renderRunList() {
 
     let icon = '';
     let timeStr = '';
-    if (status === 'done')     icon = '<span class="status-done">✓</span>';
+    if (status === 'done') {
+      icon = '<span class="status-done">✓</span>';
+      // Start- und End-Uhrzeit anzeigen (z.B. "12:10 – 12:19")
+      const fmtHM = ts => {
+        const d = new Date(ts * 1000);
+        return String(d.getHours()).padStart(2,'0') + ':' +
+               String(d.getMinutes()).padStart(2,'0');
+      };
+      if (r.started_at && r.finished_at) {
+        timeStr = `${fmtHM(r.started_at)} – ${fmtHM(r.finished_at)}`;
+      }
+    }
     else if (status === 'skipped') icon = '<span style="color:var(--text-muted)">⏭</span>';
     else if (status === 'armed')   icon = '<span class="status-armed pulse">◉</span>';
     else if (status === 'running') {
