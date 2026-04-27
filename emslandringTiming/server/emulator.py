@@ -106,6 +106,11 @@ class Emulator:
         self._kart_data: dict[int, dict] = {}
         self._announced_karts: set[int] = set()
 
+        # Delta-Tracking für $G/$H: nach jedem Passing emittieren wir nur
+        # **veränderte** Positionen (so wie die echte MyLaps-Box).
+        # pos (int) → (kart_nr, laps, last_total_us)
+        self._last_g_state: dict[int, tuple[int, int, int]] = {}
+
     # ── Server-Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self, port: int) -> None:
@@ -346,6 +351,7 @@ class Emulator:
         # State zurücksetzen
         self._kart_data = {}
         self._announced_karts = set()
+        self._last_g_state = {}
         self._duration_sec = max(0, int(duration_sec))
         self._is_gp = bool(is_gp)
         self._green_wall_time = time.time()
@@ -368,14 +374,32 @@ class Emulator:
         # 4. $A – nur für Training: alle vorab registrierten Karts.
         # Im GP überspringt die Box den $A-Block und meldet Karts
         # dynamisch beim ersten Passing.
+        sorted_pre: list[tuple[int, str]] = []
         if not self._is_gp and pre_registered:
-            for nr, name in sorted(pre_registered, key=lambda x: x[0]):
+            sorted_pre = sorted(pre_registered, key=lambda x: x[0])
+            for nr, name in sorted_pre:
                 await self._send(
                     f'$A,"{nr}","{nr}",,"","{name}","",12'
                 )
                 self._announced_karts.add(nr)
 
-        # 5. Erstes $F GREEN (cd=0, el=0 – exakt im Start-Moment)
+        # 5. Initial-Snapshot (NUR Training): die echte MyLaps-Box sendet
+        # nach dem $A-Block einen kompletten $G/$H-Block mit allen
+        # vorab registrierten Karts auf laps=0, total=00:00:00.000 (in
+        # numerischer Reihenfolge). Erst dadurch sieht die Zeitentafel
+        # die volle Roster-Liste schon vor dem ersten Passing.
+        if sorted_pre:
+            for i, (nr, _name) in enumerate(sorted_pre, start=1):
+                await self._send(
+                    f'$G,{i},"{nr}",0,"00:00:00.000"'
+                )
+                self._last_g_state[i] = (nr, 0, 0)
+            for i, (nr, _name) in enumerate(sorted_pre, start=1):
+                await self._send(
+                    f'$H,{i},"{nr}",0,"00:00:00.000"'
+                )
+
+        # 6. Erstes $F GREEN (cd=0, el=0 – exakt im Start-Moment)
         wall = datetime.now().strftime("%H:%M:%S")
         await self._send(
             f'$F,9999,"00:00:00","{wall}","00:00:00","{_status6("GREEN")}"'
@@ -453,20 +477,48 @@ class Emulator:
             f'$J,"{kart_nr}","{j_lap_str}","{_hmsm(elapsed_us)}"'
         )
 
-        # 3. $G-Block – alle Karts in Ranking-Reihenfolge
-        for pos, nr in enumerate(sorted_kart_order, start=1):
-            d = self._kart_data.get(nr)
-            if not d:
-                continue
+        # 3+4. Delta-Update für $G/$H – Ranking nach **MyLaps-Regeln**:
+        #
+        #   primär  : laps DESC (mehr Runden zuerst)
+        #   sekundär: best_lap ASC (laps>0)  ODER  -last_total_us (laps=0,
+        #             also: zuletzt gefahren zuerst)
+        #   tertiär : kart_nr ASC (Tiebreaker)
+        #
+        # Wir senden NUR die Positionen, deren (kart_nr, laps, total) sich
+        # gegenüber dem letzten emittierten Stand verändert hat – exakt so
+        # wie die echte Box.
+        active = sorted(
+            self._kart_data.items(),
+            key=lambda item: (
+                -item[1]["laps"],
+                item[1]["best_us"] if item[1]["laps"] > 0
+                else -item[1]["last_total_us"],
+                item[0],
+            ),
+        )
+
+        # Neue $G-States pro Position berechnen
+        new_g_state: dict[int, tuple[int, int, int]] = {}
+        for pos, (nr, d) in enumerate(active, start=1):
+            new_g_state[pos] = (nr, d["laps"], d["last_total_us"])
+
+        # Veränderte Positionen ermitteln
+        changed_positions: list[int] = [
+            pos for pos, val in new_g_state.items()
+            if self._last_g_state.get(pos) != val
+        ]
+
+        # $G für veränderte Positionen
+        for pos in changed_positions:
+            nr, d = active[pos - 1]
             await self._send(
                 f'$G,{pos},"{nr}",{d["laps"]},"{_hmsm(d["last_total_us"])}"'
             )
+            self._last_g_state[pos] = new_g_state[pos]
 
-        # 4. $H-Block – Bestzeiten in derselben Reihenfolge
-        for pos, nr in enumerate(sorted_kart_order, start=1):
-            d = self._kart_data.get(nr)
-            if not d:
-                continue
+        # $H für dieselben Positionen (paarweise mit $G, wie MyLaps)
+        for pos in changed_positions:
+            nr, d = active[pos - 1]
             best_str = _hmsm(d["best_us"]) if d["best_us"] else "00:00:00.000"
             await self._send(
                 f'$H,{pos},"{nr}",{d["best_lap_nr"]},"{best_str}"'
@@ -496,10 +548,13 @@ class Emulator:
         self._last_tick_sec = int(time.time())
 
     async def session_complete(self, run_id: int) -> None:
-        """Schickt das abschließende ``$C``-Marker. Der Ticker übernimmt
-        die weiteren FINISH-Sekunden-Ticks (mit elapsed-Reset und OFF-
-        Übergang zeitgesteuert über ``_done_state_line``)."""
-        await self._send(f'$C,12,"{run_id}"')
+        """Markiert das endgültige Session-Ende intern.
+
+        Im 1:1-Mitschnitt sendet die echte MyLaps-Box **kein** abschließendes
+        ``$C`` – sie bleibt einfach im FINISH-State, bis nach Ablauf der
+        Wartezeit der elapsed-Reset und schließlich der OFF-Übergang
+        kommen. Wir setzen daher nur den FINISH-Zeitstempel; der Ticker
+        kümmert sich um den Rest über ``_done_state_line``."""
         if self._finish_wall_time is None:
             self._finish_wall_time = time.time()
 
