@@ -315,9 +315,10 @@ class Emulator:
         )
 
     def _fmt_F_off(self, wall: str) -> str:
-        """OFF-State: Feld 1 = 0, Status = einzelnes Leerzeichen
-        (genau wie im 1:1-Mitschnitt vor/nach jeder Session)."""
-        return f'$F,0,"00:00:00","{wall}","00:00:00"," "'
+        """OFF-State: Feld 1 = 0, Status = **6 Leerzeichen** (wie alle
+        anderen Status-Felder, exakt so im 1:1-Mitschnitt vom 27.04.2026:
+        ``$F,0,"00:00:00","15:12:00","00:00:00","      "``)."""
+        return f'$F,0,"00:00:00","{wall}","00:00:00","      "'
 
     # ── Public API für race_engine ───────────────────────────────────────────
 
@@ -383,21 +384,15 @@ class Emulator:
                 )
                 self._announced_karts.add(nr)
 
-        # 5. Initial-Snapshot (NUR Training): die echte MyLaps-Box sendet
-        # nach dem $A-Block einen kompletten $G/$H-Block mit allen
-        # vorab registrierten Karts auf laps=0, total=00:00:00.000 (in
-        # numerischer Reihenfolge). Erst dadurch sieht die Zeitentafel
-        # die volle Roster-Liste schon vor dem ersten Passing.
-        if sorted_pre:
-            for i, (nr, _name) in enumerate(sorted_pre, start=1):
-                await self._send(
-                    f'$G,{i},"{nr}",0,"00:00:00.000"'
-                )
-                self._last_g_state[i] = (nr, 0, 0)
-            for i, (nr, _name) in enumerate(sorted_pre, start=1):
-                await self._send(
-                    f'$H,{i},"{nr}",0,"00:00:00.000"'
-                )
+        # 5. KEIN voll-Roster-Snapshot. Im 1:1-Mitschnitt vom 27.04.
+        # (Lauf "Gruppe 6") emittiert die echte MyLaps-Box NUR ein
+        # einzelnes $J/$G/$H für das Kart, das exakt im GREEN-Moment
+        # die Linie überquert (z.B. ``$J,"34","00:00:00.000",
+        # "00:00:00.000"``). Karts ohne Passing erscheinen erst dann
+        # in $G/$H, wenn sie tatsächlich erkannt werden – sie werden
+        # natürlich über ``on_passing()`` ergänzt.
+        # Der frühere "alle 55 Karts auf 00:00:00.000"-Snapshot war
+        # eine Fehlinterpretation eines MyLaps-Edge-Cases.
 
         # 6. Erstes $F GREEN (cd=0, el=0 – exakt im Start-Moment)
         wall = datetime.now().strftime("%H:%M:%S")
@@ -480,19 +475,21 @@ class Emulator:
         # 3+4. Delta-Update für $G/$H – Ranking nach **MyLaps-Regeln**:
         #
         #   primär  : laps DESC (mehr Runden zuerst)
-        #   sekundär: best_lap ASC (laps>0)  ODER  -last_total_us (laps=0,
-        #             also: zuletzt gefahren zuerst)
-        #   tertiär : kart_nr ASC (Tiebreaker)
+        #   sekundär: best_lap_us ASC (nur für laps>0)
+        #   tertiär : kart_nr ASC (für 0-Runden-Karts effektiv die
+        #             alleinige Sortierung; auch Tiebreaker für gleiche
+        #             best_lap-Zeiten)
         #
-        # Wir senden NUR die Positionen, deren (kart_nr, laps, total) sich
-        # gegenüber dem letzten emittierten Stand verändert hat – exakt so
-        # wie die echte Box.
+        # 1:1-Mitschnitt vom 27.04. (Lauf "Gruppe 6") zeigt: 0-Runden-
+        # Karts werden nach **kart_nr aufsteigend** sortiert (32, 38, 39,
+        # 40, 41, 43, 47, 49 – nicht nach Detection-Zeit oder total).
+        # Wir senden NUR die Positionen, deren (kart_nr, laps, total)
+        # sich gegenüber dem letzten emittierten Stand verändert hat.
         active = sorted(
             self._kart_data.items(),
             key=lambda item: (
                 -item[1]["laps"],
-                item[1]["best_us"] if item[1]["laps"] > 0
-                else -item[1]["last_total_us"],
+                item[1]["best_us"] if item[1]["laps"] > 0 else 0,
                 item[0],
             ),
         )
