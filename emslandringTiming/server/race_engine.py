@@ -237,17 +237,10 @@ class RaceEngine:
                 timestamp_us, lap_us, strength, hits,
             )
 
-        # Erstes Passing → $A an Emulator
+        # Erstes-Passing-Tracking (für UI-Highlights). Den $A-Versand für
+        # neue Karts übernimmt der Emulator selbst beim ersten Passing.
         if kart_nr not in self.first_karts_seen:
             self.first_karts_seen.add(kart_nr)
-            if self.run_id:
-                await emulator.kart_registered(self.run_id, kart_nr)
-
-        # $H/$G an Emulator (nur wenn echte Runde)
-        if lap_us is not None and self.status in ("running", "finishing"):
-            await emulator.on_passing(
-                kart_nr, kart.best_us, kart.laps, lap_us
-            )
 
         # Finish-Flag VOR Broadcast setzen, damit das Kart sofort als „fertig“ im UI erscheint
         if self.status == "finishing":
@@ -258,6 +251,19 @@ class RaceEngine:
         position = next(
             (i + 1 for i, k in enumerate(sorted_karts) if k.kart_nr == kart_nr), 0
         )
+
+        # Emulator: bei jedem Passing $J/$G/$H mit aktueller Rangliste senden.
+        # Auch Intro-Passings (lap_us is None) werden weitergereicht – die
+        # echte MyLaps-Box gibt diese ebenfalls aus (mit lap_time=0).
+        if self.status in ("running", "finishing"):
+            sorted_order = [k.kart_nr for k in sorted_karts]
+            await emulator.on_passing(
+                kart_nr=kart_nr,
+                kart_name=kart.name,
+                lap_time_us=lap_us,
+                passing_wall_time=kart.last_passing_ts,
+                sorted_kart_order=sorted_order,
+            )
         await hub.broadcast({
             "type": "passing",
             "kart_nr": kart_nr,
@@ -296,8 +302,30 @@ class RaceEngine:
         await database.update_run(self.run_id, status="running", started_at=now)
 
         mode = self.run["mode"]
-        group = "RACE" if mode in ("gp_time", "gp_laps") else f"Gruppe {self.run['run_number']}"
-        await emulator.session_start(self.run_id, group)
+        is_gp = mode in ("gp_time", "gp_laps")
+        group = "RACE" if is_gp else f"Gruppe {self.run['run_number']}"
+
+        # Pre-registered Karts für den $A-Block beim Session-Start.
+        # Im 1:1-Mitschnitt zeigt die echte MyLaps-Box: im **Training**
+        # werden alle bekannten Karts vorab via $A angemeldet, im
+        # **Grand Prix** dagegen entfällt der Vorab-Block – Karts werden
+        # nur dynamisch beim ersten Passing nachgemeldet.
+        if is_gp:
+            pre_registered: list[tuple[int, str]] = []
+        else:
+            seen: set[int] = set()
+            pre_registered = []
+            for tid, info in cfg.get().get("transponders", {}).items():
+                nr = info.get("kart_nr")
+                if nr is None or nr in seen:
+                    continue
+                seen.add(nr)
+                pre_registered.append((nr, info.get("name", f"Kart {nr}")))
+
+        duration = int(self.run.get("duration_sec") or 0)
+        await emulator.session_start(
+            self.run_id, group, duration, pre_registered, is_gp=is_gp,
+        )
 
         self._timer_task = asyncio.create_task(self._timer_loop(), name="timer")
         mode = self.run["mode"]
