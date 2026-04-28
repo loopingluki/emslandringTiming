@@ -801,6 +801,18 @@ function showLapDetail(kart_nr) {
     `<span class="lap-chip ${us === best ? 'best' : ''}">${i+1}: ${fmtTime(us)}</span>`
   ).join('') || '<span style="color:var(--text-muted);font-size:11px">Noch keine Runden</span>';
   row.style.display = '';
+  // Mit display:block auf TR/TD verliert der Flex-Container seinen
+  // Width-Kontext (TR/TD in einem TBODY mit display:table-row-group
+  // bekommen kein sauberes width:100%). Daher setzen wir die Breite
+  // explizit auf die aktuelle Tabellen-Breite.
+  const tbl = document.getElementById('kart-table');
+  if (tbl) {
+    const w = tbl.offsetWidth + 'px';
+    row.style.width = w;
+    const td = row.querySelector('td');
+    if (td) td.style.width = w;
+    inner.style.width = w;
+  }
 }
 
 function flashKartRow(kart_nr) {
