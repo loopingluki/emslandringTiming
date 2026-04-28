@@ -683,7 +683,7 @@ tr.lap-detail td { padding: 0; background: var(--bg); }
 
 /* ─── Laufzeit-Fortschrittsbalken ─────────────────────────────────────────── */
 #run-progress-wrap {
-  height: 6px;
+  height: 12px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
   position: relative;
@@ -692,7 +692,7 @@ tr.lap-detail td { padding: 0; background: var(--bg); }
 #run-progress-bar {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--green) 0%, var(--yellow) 70%, var(--red) 95%);
+  background: var(--green);
   transition: width 0.5s linear;
 }
 #run-progress-bar.finishing {
