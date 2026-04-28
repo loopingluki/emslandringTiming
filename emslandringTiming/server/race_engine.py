@@ -81,6 +81,7 @@ class KartState:
             "strength": self.strength,
             "lap_times_us": self.lap_times_us,
             "seen_after_finish": self.seen_after_finish,
+            "total_us": sum(self.lap_times_us) if self.lap_times_us else 0,
         }
 
 
@@ -191,6 +192,19 @@ class RaceEngine:
         if self.status not in ("running", "paused", "finishing"):
             return
         self.remaining_sec = max(0.0, self.remaining_sec + delta_sec)
+        # Auch die Renndauer im run-Dict mitziehen, damit der Emulator
+        # die neue Dauer für seine Countdown-Berechnung kennt.
+        if self.run is not None:
+            self.run["duration_sec"] = max(
+                0, int(self.run.get("duration_sec", 0)) + delta_sec
+            )
+            # Emulator direkt informieren, damit der Sekunden-Ticker den
+            # neuen Countdown sofort verwendet (sonst läuft er weiter mit
+            # der alten Renndauer aus session_start und endet zu früh).
+            try:
+                emulator._duration_sec = int(self.run["duration_sec"])
+            except Exception:
+                pass
         await self._broadcast_run_state()
 
     async def set_kart_name(self, kart_nr: int, name: str) -> None:
@@ -506,8 +520,46 @@ class RaceEngine:
         sorted_karts = self._sorted_karts()
         await hub.broadcast({
             "type": "kart_table",
-            "karts": [k.to_dict(i + 1) for i, k in enumerate(sorted_karts)],
+            "karts": self._build_kart_dicts(sorted_karts),
         })
+
+    def _build_kart_dicts(self, sorted_karts: list[KartState]) -> list[dict]:
+        """Erzeugt die Kart-Dicts mit Position und – im GP-Modus –
+        ``gap_us`` (Abstand zum Führenden in derselben Rundenzahl).
+
+        ``gap_us`` ist:
+          * ``0`` für den Führenden
+          * positiver µs-Wert für Karts mit gleicher Rundenzahl wie der
+            Führende (``total_us - leader_total_us``)
+          * ``None`` für Karts mit weniger Runden (Rundenrückstand wird
+            statt einem Zeitabstand angezeigt)
+        """
+        mode = self.run["mode"] if self.run else "training"
+        is_gp = mode in ("gp_time", "gp_laps")
+
+        result: list[dict] = []
+        leader_total: int | None = None
+        leader_laps: int | None = None
+        for i, k in enumerate(sorted_karts):
+            d = k.to_dict(i + 1)
+            if is_gp:
+                if i == 0 and k.laps > 0:
+                    leader_total = d["total_us"]
+                    leader_laps = k.laps
+                if i == 0:
+                    d["gap_us"] = 0
+                    d["gap_laps"] = 0
+                elif leader_laps is None or k.laps == 0:
+                    d["gap_us"] = None
+                    d["gap_laps"] = None
+                elif k.laps == leader_laps:
+                    d["gap_us"] = max(0, d["total_us"] - (leader_total or 0))
+                    d["gap_laps"] = 0
+                else:
+                    d["gap_us"] = None
+                    d["gap_laps"] = leader_laps - k.laps
+            result.append(d)
+        return result
 
     async def _broadcast_run_state(self) -> None:
         if not self.run:
@@ -571,7 +623,7 @@ class RaceEngine:
                 "finish_remaining_sec": self._finish_remaining(),
                 "finish_wait_total": self._finish_wait_total,
             } if self.run else None,
-            "karts": [k.to_dict(i + 1) for i, k in enumerate(sorted_karts)],
+            "karts": self._build_kart_dicts(sorted_karts),
         }
 
 

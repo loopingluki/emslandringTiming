@@ -716,10 +716,29 @@ function renderKartTable() {
   const isFinishing = state.activeRun && state.activeRun.status === 'finishing'
                     && state.selectedRunId === state.activeRun.id;
 
+  // GP-Modus: andere Spalten-Sichtbarkeit (Abstand statt Ø5/Trend).
+  const run     = state.runs.find(r => r.id === state.selectedRunId);
+  const isGp    = run && (run.mode === 'gp_time' || run.mode === 'gp_laps');
+  const head    = document.querySelector('#kart-table thead tr');
+  if (head) {
+    head.querySelector('.col-avg5').style.display  = isGp ? 'none' : '';
+    head.querySelector('.col-trend').style.display = isGp ? 'none' : '';
+    head.querySelector('.col-gap').style.display   = isGp ? '' : 'none';
+  }
+
   tbody.innerHTML = state.karts.map(k => {
     const posClass  = k.position <= 3 ? `pos-${k.position}` : '';
     const sc        = sigClass(k.strength, noise);
     const finishCls = isFinishing && k.seen_after_finish ? 'finished' : '';
+
+    // GP: Abstand zum Führenden
+    let gapText = '';
+    if (isGp) {
+      if (k.position === 1)            gapText = '–';
+      else if (k.gap_laps && k.gap_laps > 0) gapText = `+${k.gap_laps} Rdn`;
+      else if (k.gap_us != null)       gapText = '+' + fmtTime(k.gap_us);
+      else                             gapText = '–';
+    }
 
     return `
     <tr class="kart-row ${finishCls}" data-kart-nr="${k.kart_nr}">
@@ -729,8 +748,9 @@ function renderKartTable() {
       <td class="num">${k.laps}</td>
       <td class="best-time num">${fmtTime(k.best_us)}</td>
       <td class="time num">${fmtTime(k.last_us)}</td>
-      <td class="time num">${fmtTime(k.avg5_us)}</td>
-      <td class="num">${trendSymbol(k.trend)}</td>
+      <td class="time num col-avg5" ${isGp ? 'style="display:none"' : ''}>${fmtTime(k.avg5_us)}</td>
+      <td class="num col-trend" ${isGp ? 'style="display:none"' : ''}>${trendSymbol(k.trend)}</td>
+      <td class="time num col-gap" ${isGp ? '' : 'style="display:none"'}>${gapText}</td>
       <td class="prog-cell">
         <div class="prog-bar-bg">
           <div class="prog-bar-fill" id="prog-${k.kart_nr}"
@@ -741,7 +761,7 @@ function renderKartTable() {
       <td class="sig-cell ${sc}">${k.strength || '–'}</td>
     </tr>
     <tr class="lap-detail" id="lap-detail-${k.kart_nr}" style="display:none">
-      <td colspan="10">
+      <td colspan="11">
         <div class="lap-detail-inner" id="lap-inner-${k.kart_nr}"></div>
       </td>
     </tr>`;

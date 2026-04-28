@@ -85,7 +85,13 @@ class Decoder:
                 pass
 
     async def _run(self) -> None:
+        # _disconnect_emitted: True wenn wir den connected=False-Event bereits
+        # geschickt haben. Verhindert dass wir bei jedem Reconnect-Versuch
+        # erneut einen "Heartbeat" mit alten Werten broadcasten – sonst sieht
+        # die Web-UI noch lange nach dem Trennen scheinbar Heartbeats.
+        _disconnect_emitted = False
         while True:
+            was_connected = self.connected
             try:
                 await self._connect_and_read()
             except asyncio.CancelledError:
@@ -93,9 +99,23 @@ class Decoder:
             except Exception:
                 pass
             self.connected = False
-            if self._on_heartbeat:
-                await self._on_heartbeat(connected=False, noise=self.noise, loop=self.loop)
+            # Werte sofort auf 0 setzen – das was wir vorher hatten ist
+            # jetzt nicht mehr gültig (Decoder hat keinen Strom).
+            self.noise = 0
+            self.loop = 0
+            # Nur EINMAL den Disconnect-Event broadcasten (beim ersten Übergang
+            # connected→disconnected) und erst dann wieder, wenn vorher ein
+            # Reconnect erfolgreich war.
+            if was_connected or not _disconnect_emitted:
+                _disconnect_emitted = True
+                if self._on_heartbeat:
+                    await self._on_heartbeat(connected=False, noise=0, loop=0)
             await asyncio.sleep(RECONNECT_DELAY)
+            # Beim erfolgreichen Reconnect (connected=True) wird beim nächsten
+            # Heartbeat-Empfang im Empfangsloop _disconnect_emitted irrelevant –
+            # wir reset'en es hier, falls die nächste Runde wieder verbindet.
+            if self.connected:
+                _disconnect_emitted = False
 
     async def _connect_and_read(self) -> None:
         reader, writer = await asyncio.wait_for(
