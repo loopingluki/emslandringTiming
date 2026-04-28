@@ -761,7 +761,7 @@ function renderKartTable() {
       <td class="sig-cell ${sc}">${k.strength || '–'}</td>
     </tr>
     <tr class="lap-detail" id="lap-detail-${k.kart_nr}" style="display:none">
-      <td colspan="99">
+      <td colspan="11">
         <div class="lap-detail-inner" id="lap-inner-${k.kart_nr}"></div>
       </td>
     </tr>`;
