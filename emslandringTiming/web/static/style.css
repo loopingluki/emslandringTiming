@@ -562,13 +562,14 @@ td.sig-cell { width: 48px; text-align: right; font-variant-numeric: tabular-nums
 .sig-bad  { color: var(--red); }
 
 /* ─── Lap Detail Row ─────────────────────────────────────────────────────── */
-tr.lap-detail td { padding: 0; background: var(--bg); min-width: 100%; }
+tr.lap-detail td { padding: 0; background: var(--bg); }
 .lap-detail-inner {
+  width: 9999px;
+  max-width: 100%;
   padding: 6px 16px 10px 52px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-  min-width: 100%;
   box-sizing: border-box;
 }
 .lap-chip {
