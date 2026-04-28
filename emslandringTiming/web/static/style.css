@@ -577,6 +577,8 @@ tr.lap-detail td {
   background: var(--bg);
 }
 .lap-detail-inner {
+  width: 100%;
+  box-sizing: border-box;
   padding: 6px 16px 10px 52px;
   display: flex;
   flex-wrap: wrap;
