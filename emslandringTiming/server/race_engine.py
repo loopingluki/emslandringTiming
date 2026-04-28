@@ -189,7 +189,11 @@ class RaceEngine:
         await self._finalize()
 
     async def adjust_time(self, delta_sec: int) -> None:
-        if self.status not in ("running", "paused", "finishing"):
+        # "armed" wurde früher übersprungen → wenn der Operator die Dauer
+        # vor dem ersten Passing änderte, wurde remaining_sec nicht
+        # angepasst und der Lauf startete später trotzdem mit der alten
+        # Zeit. Daher auch im armed-Zustand mitziehen.
+        if self.status not in ("armed", "running", "paused", "finishing"):
             return
         self.remaining_sec = max(0.0, self.remaining_sec + delta_sec)
         # Auch die Renndauer im run-Dict mitziehen, damit der Emulator
