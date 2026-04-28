@@ -476,7 +476,7 @@ body {
 table#kart-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 table#kart-table thead th {
