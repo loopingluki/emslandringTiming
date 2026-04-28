@@ -562,15 +562,25 @@ td.sig-cell { width: 48px; text-align: right; font-variant-numeric: tabular-nums
 .sig-bad  { color: var(--red); }
 
 /* ─── Lap Detail Row ─────────────────────────────────────────────────────── */
-tr.lap-detail td { padding: 0; background: var(--bg); }
+/* Trick: TR und TD auf display:block setzen damit die Lap-Detail-Zeile
+   das table-layout der Spalten nicht mehr beeinflusst (in Safari +
+   Chrome verursacht ein Colspan-TR über alle Spalten sonst, dass die
+   Spalten beim Aufklappen auf ihre deklarierten Pixel-Breiten
+   zurückspringen). Mit display:block ist die Zeile aus dem Tabellen-
+   Layout raus und nimmt einfach die TBODY-Breite ein. */
+tr.lap-detail { display: block; width: 100%; }
+tr.lap-detail td {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  background: var(--bg);
+}
 .lap-detail-inner {
-  width: 9999px;
-  max-width: 100%;
   padding: 6px 16px 10px 52px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-  box-sizing: border-box;
 }
 .lap-chip {
   font-size: 11px;
