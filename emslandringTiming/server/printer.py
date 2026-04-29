@@ -756,8 +756,31 @@ async def render_run_html(run_id: int, kart_nr: int | None = None, sim_laps: int
             f'{body_html}</body></html>')
 
 
-async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
-    """Druckauftrag. kart_nr: nur dieses Kart; None = alle Karts."""
+async def print_run(
+    run_id: int,
+    kart_nr: int | None = None,
+    *,
+    printer_override: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Druckauftrag mit Diagnose-Infos.
+
+    Parameter:
+      kart_nr           – nur dieses Kart drucken (None = alle Karts)
+      printer_override  – CUPS-Drucker-Name; überschreibt config.json
+                          (zum Gegentest auf einem anderen Drucker)
+      dry_run           – PDF nur erzeugen+optimieren, NICHT drucken.
+                          Liefert nur die Größen+Zeit-Diagnose zurück.
+
+    Antwort enthält jetzt Zeit- und Größen-Diagnose:
+      sizes: { merged_kb, optimized_kb, ratio_pct }
+      timing_ms: { gather, render, merge, optimize, lp_send, total }
+      debug_path: Pfad zum gespeicherten PDF unter /tmp
+    """
+    t_start = time.time()
+    timing: dict[str, int] = {}
+    sizes: dict[str, int] = {}
+
     if not (TEMPLATES_DIR / "training.pdf").exists():
         return {"ok": False, "error": "Template training.pdf fehlt in server/data/templates/"}
 
@@ -766,7 +789,9 @@ async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
     except ImportError:
         return {"ok": False, "error": "WeasyPrint nicht installiert (pip install weasyprint)"}
 
+    t0 = time.time()
     data = await _gather_run_data(run_id)
+    timing["gather_ms"] = int((time.time() - t0) * 1000)
     if not data["ranked"]:
         return {"ok": False, "error": "Keine Karts im Lauf"}
 
@@ -784,12 +809,15 @@ async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
         overlay_pdf = WpHTML(string=html_str, base_url=str(ROOT)).write_pdf()
         return _merge_pages(overlay_pdf)
 
+    t0 = time.time()
     for kart in kart_list:
         overlay_html = await _build_overlay_html(data, kart)
         merged = await asyncio.to_thread(_render_kart, overlay_html)
         all_merged.append(merged)
+    timing["render_merge_ms"] = int((time.time() - t0) * 1000)
 
     # Alle Kart-PDFs zu einem Job zusammenführen
+    t0 = time.time()
     if len(all_merged) == 1:
         final_pdf = all_merged[0]
     else:
@@ -802,36 +830,91 @@ async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
         buf = io.BytesIO()
         writer.write(buf)
         final_pdf = buf.getvalue()
-
-    printer_name = cfg.get().get("printer") or ""
-    if not printer_name:
-        return {"ok": False, "error": "Kein Drucker konfiguriert"}
-    if not shutil.which("lp"):
-        return {"ok": False, "error": "`lp` nicht verfügbar (macOS/Linux CUPS)"}
+    timing["concat_ms"] = int((time.time() - t0) * 1000)
+    sizes["merged_bytes"] = len(final_pdf)
 
     # PDF mit Ghostscript optimieren – pypdf dedupliziert beim Merge die
     # Template-Ressourcen (Fonts, Bilder) nicht, dadurch wird die finale
     # PDF unnötig groß und der CUPS-Filter braucht lange für die
     # Konvertierung → Drucker-Pausen zwischen Seiten. Mit gs durchgejagt
-    # schrumpft das PDF typischerweise auf 5-10% der Originalgröße und
-    # der Drucker bekommt einen kontinuierlichen Datenstrom.
-    final_pdf = await _optimize_pdf_for_print(final_pdf)
+    # schrumpft das PDF typischerweise und der Drucker bekommt einen
+    # kontinuierlichen Datenstrom.
+    t0 = time.time()
+    optimized_pdf = await _optimize_pdf_for_print(final_pdf)
+    timing["optimize_ms"] = int((time.time() - t0) * 1000)
+    sizes["optimized_bytes"] = len(optimized_pdf)
+    sizes["ratio_pct"] = int(
+        100 * len(optimized_pdf) / max(1, len(final_pdf))
+    )
 
+    # Beide Versionen für Diagnose nach /tmp schreiben
+    debug_dir = Path("/tmp")
+    debug_files = {}
+    try:
+        merged_path = debug_dir / f"emsl-print-{run_id}-merged.pdf"
+        opt_path    = debug_dir / f"emsl-print-{run_id}-optimized.pdf"
+        merged_path.write_bytes(final_pdf)
+        opt_path.write_bytes(optimized_pdf)
+        debug_files["merged"]    = str(merged_path)
+        debug_files["optimized"] = str(opt_path)
+    except Exception as exc:
+        log.warning("Konnte Debug-PDFs nicht schreiben: %s", exc)
+
+    log.info(
+        "[print_run] run=%s karts=%d merged=%.1fKB optimized=%.1fKB (%d%%) "
+        "render=%dms gs=%dms",
+        run_id, len(all_merged),
+        sizes["merged_bytes"] / 1024,
+        sizes["optimized_bytes"] / 1024,
+        sizes["ratio_pct"],
+        timing["render_merge_ms"],
+        timing["optimize_ms"],
+    )
+
+    # Bei dry_run hier abbrechen – PDF wurde geschrieben, aber wir
+    # senden ihn nicht zum Drucker.
+    if dry_run:
+        timing["total_ms"] = int((time.time() - t_start) * 1000)
+        return {
+            "ok": True,
+            "dry_run": True,
+            "karts": len(all_merged),
+            "sizes": sizes,
+            "timing_ms": timing,
+            "debug_files": debug_files,
+        }
+
+    # Druckername bestimmen (Override > config.json)
+    printer_name = (printer_override or cfg.get().get("printer") or "").strip()
+    if not printer_name:
+        return {"ok": False, "error": "Kein Drucker konfiguriert"}
+    if not shutil.which("lp"):
+        return {"ok": False, "error": "`lp` nicht verfügbar (macOS/Linux CUPS)"}
+
+    t0 = time.time()
     proc = await asyncio.create_subprocess_exec(
         "lp", "-d", printer_name, "-o", "sides=one-sided",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate(input=final_pdf)
+    out, err = await proc.communicate(input=optimized_pdf)
+    timing["lp_send_ms"] = int((time.time() - t0) * 1000)
+
     if proc.returncode != 0:
         log.error("lp Fehler: %s", err.decode("utf-8", "ignore"))
         return {"ok": False, "error": err.decode("utf-8", "ignore")}
 
-    return {"ok": True,
-            "job": out.decode("utf-8", "ignore").strip(),
-            "printer": printer_name,
-            "karts": len(all_merged)}
+    timing["total_ms"] = int((time.time() - t_start) * 1000)
+    return {
+        "ok": True,
+        "job": out.decode("utf-8", "ignore").strip(),
+        "printer": printer_name,
+        "karts": len(all_merged),
+        "sizes": sizes,
+        "timing_ms": timing,
+        "debug_files": debug_files,
+    }
 
 
 async def _optimize_pdf_for_print(pdf_bytes: bytes) -> bytes:

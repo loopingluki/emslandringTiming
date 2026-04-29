@@ -378,10 +378,28 @@ async def api_transponders():
 
 
 @app.post("/api/runs/{run_id}/print")
-async def api_print_run(run_id: int, kart_nr: int | None = None):
+async def api_print_run(
+    run_id: int,
+    kart_nr: int | None = None,
+    printer_name: str | None = None,
+    dry_run: int = 0,
+):
+    """Druckt einen Lauf.
+
+    Query-Parameter:
+      kart_nr      – nur dieses Kart drucken
+      printer_name – CUPS-Drucker überschreiben (für Gegentest)
+      dry_run=1    – PDF nur erzeugen+optimieren+nach /tmp speichern,
+                     NICHT zum Drucker senden. Gibt Größen+Zeiten zurück.
+    """
     import traceback as _tb
     try:
-        res = await printer.print_run(run_id, kart_nr=kart_nr)
+        res = await printer.print_run(
+            run_id,
+            kart_nr=kart_nr,
+            printer_override=printer_name,
+            dry_run=bool(dry_run),
+        )
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}"
         raise HTTPException(500, err)
