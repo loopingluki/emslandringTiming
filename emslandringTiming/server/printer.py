@@ -696,18 +696,27 @@ def _merge_pages(overlay_bytes: bytes) -> bytes:
     pikepdf nicht installiert ist – pypdf bettet das Template
     allerdings für jede Output-Seite neu ein, was zu sehr großen
     PDFs führt (~1 MB pro Seite Overhead).
-
-    Mit pikepdf: typische Output-Größe für 13 Karts → ~500 KB statt 19 MB.
     """
     try:
-        return _merge_pages_pikepdf(overlay_bytes)
-    except ImportError:
-        log.warning(
-            "pikepdf nicht verfügbar – fallback auf pypdf "
-            "(produziert ~40x größere PDFs). "
-            "Installation: pip install pikepdf"
+        result = _merge_pages_pikepdf(overlay_bytes)
+        log.info(
+            "[merge] pikepdf: overlay=%dKB → merged=%dKB",
+            len(overlay_bytes) // 1024, len(result) // 1024,
         )
-        return _merge_pages_pypdf(overlay_bytes)
+        return result
+    except ImportError as e:
+        log.warning(
+            "[merge] pikepdf nicht verfügbar (%s) – fallback auf pypdf. "
+            "Installation: sudo apt install python3-pikepdf", e,
+        )
+    except Exception as e:
+        log.error("[merge] pikepdf-Fehler: %s – fallback auf pypdf", e)
+    result = _merge_pages_pypdf(overlay_bytes)
+    log.info(
+        "[merge] pypdf (fallback): overlay=%dKB → merged=%dKB",
+        len(overlay_bytes) // 1024, len(result) // 1024,
+    )
+    return result
 
 
 def _merge_pages_pikepdf(overlay_bytes: bytes) -> bytes:

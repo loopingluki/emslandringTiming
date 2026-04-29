@@ -257,6 +257,42 @@ async def api_get_settings():
     return c
 
 
+@app.get("/api/print-diag")
+async def api_print_diagnostics():
+    """Zeigt welche PDF-Tools verfügbar sind."""
+    import shutil as _sh
+    diag = {
+        "pikepdf": False,
+        "pikepdf_version": None,
+        "pypdf": False,
+        "pypdf_version": None,
+        "weasyprint": False,
+        "weasyprint_version": None,
+        "ghostscript": _sh.which("gs"),
+        "lp": _sh.which("lp"),
+        "qpdf": _sh.which("qpdf"),
+    }
+    try:
+        import pikepdf
+        diag["pikepdf"] = True
+        diag["pikepdf_version"] = pikepdf.__version__
+    except ImportError as e:
+        diag["pikepdf_error"] = str(e)
+    try:
+        import pypdf
+        diag["pypdf"] = True
+        diag["pypdf_version"] = pypdf.__version__
+    except ImportError:
+        pass
+    try:
+        import weasyprint
+        diag["weasyprint"] = True
+        diag["weasyprint_version"] = weasyprint.__version__
+    except ImportError:
+        pass
+    return diag
+
+
 @app.get("/api/printers")
 async def api_printers():
     import asyncio
