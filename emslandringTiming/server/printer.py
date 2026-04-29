@@ -809,14 +809,6 @@ async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
     if not shutil.which("lp"):
         return {"ok": False, "error": "`lp` nicht verfügbar (macOS/Linux CUPS)"}
 
-    # PDF mit Ghostscript optimieren – pypdf dedupliziert beim Merge die
-    # Template-Ressourcen (Fonts, Bilder) nicht, dadurch wird die finale
-    # PDF unnötig groß und der CUPS-Filter braucht lange für die
-    # Konvertierung → Drucker-Pausen zwischen Seiten. Mit gs durchgejagt
-    # schrumpft das PDF typischerweise auf 5-10% der Originalgröße und
-    # der Drucker bekommt einen kontinuierlichen Datenstrom.
-    final_pdf = await _optimize_pdf_for_print(final_pdf)
-
     proc = await asyncio.create_subprocess_exec(
         "lp", "-d", printer_name, "-o", "sides=one-sided",
         stdin=asyncio.subprocess.PIPE,
@@ -832,55 +824,3 @@ async def print_run(run_id: int, kart_nr: int | None = None) -> dict:
             "job": out.decode("utf-8", "ignore").strip(),
             "printer": printer_name,
             "karts": len(all_merged)}
-
-
-async def _optimize_pdf_for_print(pdf_bytes: bytes) -> bytes:
-    """Reduziert die PDF-Größe vor dem Drucken via Ghostscript.
-
-    pypdf merged Template-Pages durch ``base.merge_page(overlay)`` und
-    legt dabei für jede der ~20 Seiten eine eigene Kopie der
-    Template-Ressourcen (Fonts, Bilder, Vektorgrafiken) an. Das
-    aufgeblasene PDF kann mehrere MB groß werden, selbst wenn der
-    eigentliche Inhalt nur ~500 KB nötig hätte. Ghostscript mit
-    ``-dPDFSETTINGS=/printer`` re-rendert die Seiten und dedupliziert
-    die Ressourcen sauber.
-
-    Wenn ``gs`` nicht installiert ist oder die Optimierung fehlschlägt,
-    wird das Original-PDF zurückgegeben (keine Verschlechterung).
-    """
-    if not shutil.which("gs"):
-        log.info("Ghostscript nicht gefunden – PDF unkomprimiert drucken.")
-        return pdf_bytes
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "gs",
-            "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER",
-            "-sDEVICE=pdfwrite",
-            "-dCompatibilityLevel=1.5",
-            "-dPDFSETTINGS=/printer",
-            "-dDetectDuplicateImages=true",
-            "-dCompressFonts=true",
-            "-dSubsetFonts=true",
-            "-sOutputFile=-",
-            "-",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await proc.communicate(input=pdf_bytes)
-        if proc.returncode == 0 and out:
-            saved = len(pdf_bytes) - len(out)
-            log.info(
-                "PDF optimiert: %d → %d Bytes (-%d%% / %.1f KB gespart)",
-                len(pdf_bytes), len(out),
-                int(saved * 100 / max(1, len(pdf_bytes))),
-                saved / 1024,
-            )
-            return out
-        log.warning(
-            "Ghostscript-Optimierung fehlgeschlagen (rc=%d): %s",
-            proc.returncode, err.decode("utf-8", "ignore"),
-        )
-    except Exception as exc:
-        log.warning("PDF-Optimierung übersprungen: %s", exc)
-    return pdf_bytes
