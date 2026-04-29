@@ -481,10 +481,17 @@ function renderRunList() {
 
     const badge  = isGp ? `<span class="run-item-badge">GP</span>` : '';
     const canArm = isToday && status === 'pending' && !otherActive;
-    const armBtn = isToday && status === 'pending'
-      ? `<button class="run-item-arm ${canArm ? '' : 'disabled'}"
-                 data-run-id="${r.id}" title="Scharf schalten"
-                 ${canArm ? '' : 'disabled'}>▶</button>` : '';
+    let actionBtn = '';
+    if (isToday && status === 'pending') {
+      actionBtn = `<button class="run-item-arm ${canArm ? '' : 'disabled'}"
+                 data-run-id="${r.id}" data-action="arm" title="Scharf schalten"
+                 ${canArm ? '' : 'disabled'}>▶</button>`;
+    } else if (isToday && status === 'armed') {
+      // Scharf aber noch nicht aktiv → gelber Disarm-Button im Sidebar.
+      actionBtn = `<button class="run-item-arm disarm"
+                 data-run-id="${r.id}" data-action="disarm"
+                 title="Unscharf schalten">✕</button>`;
+    }
 
     const catCls = runCategoryClass(r.classes_raced || []);
 
@@ -494,7 +501,7 @@ function renderRunList() {
       <span class="run-item-name">${r.name}</span>
       ${badge}
       <span class="run-item-time" id="sidebar-time-${r.id}">${timeStr}</span>
-      ${armBtn}
+      ${actionBtn}
     </div>`;
   }).join('');
 
@@ -510,13 +517,19 @@ function renderRunList() {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
       const runId = +btn.dataset.runId;
-      const res = await fetch(`/api/runs/${runId}/arm`, { method: 'POST' });
+      const action = btn.dataset.action || 'arm';
+      const url = action === 'disarm'
+        ? `/api/runs/${runId}/disarm`
+        : `/api/runs/${runId}/arm`;
+      const res = await fetch(url, { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.detail || 'Fehler beim Scharf schalten');
+        alert(data.detail ||
+          (action === 'disarm' ? 'Fehler beim Unscharf schalten'
+                                : 'Fehler beim Scharf schalten'));
         return;
       }
-      selectRun(runId);
+      if (action === 'arm') selectRun(runId);
     });
   });
 }

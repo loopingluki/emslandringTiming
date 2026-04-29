@@ -591,7 +591,12 @@ class RaceEngine:
         await hub.broadcast({"type": "run_list", "runs": runs})
 
     async def _cancel_timer(self) -> None:
-        if self._timer_task and not self._timer_task.done():
+        # Selbst-Cancel verhindern (siehe _cancel_tasks-Kommentar):
+        # _trigger_finishing wird vom _timer_task selbst aufgerufen.
+        current = asyncio.current_task()
+        if (self._timer_task
+                and not self._timer_task.done()
+                and self._timer_task is not current):
             self._timer_task.cancel()
             try:
                 await self._timer_task
@@ -600,7 +605,15 @@ class RaceEngine:
 
     async def _cancel_tasks(self) -> None:
         await self._cancel_timer()
-        if self._finish_task and not self._finish_task.done():
+        # WICHTIG: nicht uns selbst canceln. _finalize() wird vom
+        # _finish_task aufgerufen; ein .cancel() auf den eigenen Task
+        # plus `await self._finish_task` würde den eigenen Task
+        # mittendrin abbrechen → _finalize läuft nicht durch und der
+        # Lauf bleibt im "finishing"-Zustand hängen.
+        current = asyncio.current_task()
+        if (self._finish_task
+                and not self._finish_task.done()
+                and self._finish_task is not current):
             self._finish_task.cancel()
             try:
                 await self._finish_task
