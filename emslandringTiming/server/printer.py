@@ -752,6 +752,34 @@ def _merge_pages_pikepdf(overlay_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
+def _concat_pdfs(pdf_bytes_list: list[bytes]) -> bytes:
+    """Konkateniert PDFs zu einem einzigen Output. Bevorzugt pikepdf
+    (dedupliziert Fonts/Images über alle Inputs hinweg via QPDF)."""
+    try:
+        import pikepdf  # type: ignore
+        out = pikepdf.new()
+        for pdf_bytes in pdf_bytes_list:
+            src = pikepdf.open(io.BytesIO(pdf_bytes))
+            out.pages.extend(src.pages)
+        buf = io.BytesIO()
+        out.save(
+            buf,
+            compress_streams=True,
+            object_stream_mode=pikepdf.ObjectStreamMode.generate,
+        )
+        return buf.getvalue()
+    except ImportError:
+        from pypdf import PdfReader, PdfWriter
+        writer = PdfWriter()
+        for pdf_bytes in pdf_bytes_list:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            for page in reader.pages:
+                writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+
 def _merge_pages_pypdf(overlay_bytes: bytes) -> bytes:
     """Fallback-Merge mit pypdf (ohne saubere Resource-Dedup)."""
     from pypdf import PdfReader, PdfWriter
@@ -864,37 +892,40 @@ async def print_run(
     if not kart_list:
         return {"ok": False, "error": f"Kart {kart_nr} nicht im Lauf"}
 
-    # Alle Kart-PDFs sequenziell erzeugen+mergen. Parallel mit
-    # asyncio.gather + to_thread war im Test LANGSAMER (vermutlich
-    # GIL-Contention zwischen WeasyPrint-Instanzen).
-    def _render_kart(html_str: str) -> bytes:
-        overlay_pdf = WpHTML(string=html_str, base_url=str(ROOT)).write_pdf()
-        return _merge_pages(overlay_pdf)
+    # NEUE Architektur: erst alle Overlays SEPARAT rendern (ohne
+    # Template), dann zu einer großen PDF konkatenieren, und am
+    # Ende EINMAL mit dem Template mergen. Damit wird das Template
+    # nur einmal eingebettet (deduplizierbar via pikepdf), statt
+    # 13× pro Kart-Merge.
+    def _render_overlay_only(html_str: str) -> bytes:
+        return WpHTML(string=html_str, base_url=str(ROOT)).write_pdf()
 
     t0 = time.time()
-    all_merged: list[bytes] = []
+    overlay_pdfs: list[bytes] = []
     for kart in kart_list:
         overlay_html = await _build_overlay_html(data, kart)
-        merged = await asyncio.to_thread(_render_kart, overlay_html)
-        all_merged.append(merged)
-    timing["render_merge_ms"] = int((time.time() - t0) * 1000)
+        ovl_pdf = await asyncio.to_thread(_render_overlay_only, overlay_html)
+        overlay_pdfs.append(ovl_pdf)
+    timing["render_ms"] = int((time.time() - t0) * 1000)
+    sizes["overlay_bytes"] = sum(len(p) for p in overlay_pdfs)
 
-    # Alle Kart-PDFs zu einem Job zusammenführen
+    # Overlays zu einer PDF konkatenieren (pikepdf bevorzugt – dedupliziert
+    # font/image resources über alle Karts hinweg)
     t0 = time.time()
-    if len(all_merged) == 1:
-        final_pdf = all_merged[0]
+    if len(overlay_pdfs) == 1:
+        combined_overlay = overlay_pdfs[0]
     else:
-        from pypdf import PdfReader, PdfWriter
-        writer = PdfWriter()
-        for pdf_bytes in all_merged:
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            for page in reader.pages:
-                writer.add_page(page)
-        buf = io.BytesIO()
-        writer.write(buf)
-        final_pdf = buf.getvalue()
-    timing["concat_ms"] = int((time.time() - t0) * 1000)
+        combined_overlay = _concat_pdfs(overlay_pdfs)
+    timing["concat_overlays_ms"] = int((time.time() - t0) * 1000)
+    sizes["combined_overlay_bytes"] = len(combined_overlay)
+
+    # JETZT erst mit Template mergen – 1× statt 13×.
+    t0 = time.time()
+    final_pdf = await asyncio.to_thread(_merge_pages, combined_overlay)
+    timing["merge_template_ms"] = int((time.time() - t0) * 1000)
     sizes["merged_bytes"] = len(final_pdf)
+    # all_merged: Anzahl der Karts (für die return-Diagnose)
+    all_merged = overlay_pdfs
 
     # PDF mit Ghostscript optimieren – pypdf dedupliziert beim Merge die
     # Template-Ressourcen (Fonts, Bilder) nicht, dadurch wird die finale
