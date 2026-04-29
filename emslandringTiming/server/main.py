@@ -257,42 +257,6 @@ async def api_get_settings():
     return c
 
 
-@app.get("/api/print-diag")
-async def api_print_diagnostics():
-    """Zeigt welche PDF-Tools verfügbar sind."""
-    import shutil as _sh
-    diag = {
-        "pikepdf": False,
-        "pikepdf_version": None,
-        "pypdf": False,
-        "pypdf_version": None,
-        "weasyprint": False,
-        "weasyprint_version": None,
-        "ghostscript": _sh.which("gs"),
-        "lp": _sh.which("lp"),
-        "qpdf": _sh.which("qpdf"),
-    }
-    try:
-        import pikepdf
-        diag["pikepdf"] = True
-        diag["pikepdf_version"] = pikepdf.__version__
-    except ImportError as e:
-        diag["pikepdf_error"] = str(e)
-    try:
-        import pypdf
-        diag["pypdf"] = True
-        diag["pypdf_version"] = pypdf.__version__
-    except ImportError:
-        pass
-    try:
-        import weasyprint
-        diag["weasyprint"] = True
-        diag["weasyprint_version"] = weasyprint.__version__
-    except ImportError:
-        pass
-    return diag
-
-
 @app.get("/api/printers")
 async def api_printers():
     import asyncio
@@ -414,28 +378,10 @@ async def api_transponders():
 
 
 @app.post("/api/runs/{run_id}/print")
-async def api_print_run(
-    run_id: int,
-    kart_nr: int | None = None,
-    printer_name: str | None = None,
-    dry_run: int = 0,
-):
-    """Druckt einen Lauf.
-
-    Query-Parameter:
-      kart_nr      – nur dieses Kart drucken
-      printer_name – CUPS-Drucker überschreiben (für Gegentest)
-      dry_run=1    – PDF nur erzeugen+optimieren+nach /tmp speichern,
-                     NICHT zum Drucker senden. Gibt Größen+Zeiten zurück.
-    """
+async def api_print_run(run_id: int, kart_nr: int | None = None):
     import traceback as _tb
     try:
-        res = await printer.print_run(
-            run_id,
-            kart_nr=kart_nr,
-            printer_override=printer_name,
-            dry_run=bool(dry_run),
-        )
+        res = await printer.print_run(run_id, kart_nr=kart_nr)
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}"
         raise HTTPException(500, err)
