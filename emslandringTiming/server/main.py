@@ -27,9 +27,6 @@ BASE = Path(__file__).parent.parent
 WEB_TEMPLATES = BASE / "web" / "templates"
 WEB_STATIC = BASE / "web" / "static"
 
-_last_health_write: float = 0.0
-
-
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -46,6 +43,7 @@ async def lifespan(app: FastAPI):
     await emulator.start(c["emulator_port"])
     hub.start_keepalive()
     ampel.start()
+    health_task = asyncio.create_task(_health_logger_loop(), name="health-logger")
 
     # Läufe die beim letzten Absturz im Status running/paused/armed steckten → done
     runs = await database.get_runs_for_date(date.today().isoformat())
@@ -55,6 +53,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    health_task.cancel()
+    try:
+        await health_task
+    except asyncio.CancelledError:
+        pass
     await hub.stop_keepalive()
     await decoder.stop()
     await emulator.stop()
@@ -77,7 +80,6 @@ async def _on_passing(transponder_id: int, timestamp_us: int,
 
 
 async def _on_heartbeat(connected: bool, noise: int, loop: int) -> None:
-    global _last_health_write
     await hub.broadcast({
         "type": "decoder_health",
         "connected": connected,
@@ -93,10 +95,29 @@ async def _on_heartbeat(connected: bool, noise: int, loop: int) -> None:
         "noise": noise,
         "loop": loop,
     })
-    now = int(time.time())
-    if now - _last_health_write >= 60:
-        _last_health_write = now
-        await database.add_health_record(now, noise, loop)
+    # DB-Schreiben übernimmt der _health_logger_loop (alle 60s) – er
+    # liest decoder.connected/noise/loop direkt und loggt im Disconnect-
+    # Fall sauber 0/0 (statt der vorherigen Werte). Damit ist die
+    # Health-Historie auch bei längeren Trennungen lückenlos.
+
+
+async def _health_logger_loop() -> None:
+    """Schreibt einmal pro Minute den aktuellen Decoder-Health in die
+    Datenbank. Im Disconnect-Fall werden 0/0 geloggt (decoder.py setzt
+    self.noise und self.loop bei Verbindungsverlust auf 0)."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            now = int(time.time())
+            if decoder.connected:
+                noise, loop = decoder.noise, decoder.loop
+            else:
+                noise, loop = 0, 0
+            await database.add_health_record(now, noise, loop)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[health_logger] Fehler: {exc}")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
