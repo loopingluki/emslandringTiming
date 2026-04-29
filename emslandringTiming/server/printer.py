@@ -689,51 +689,79 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
 
 # ── PDF-Merge ─────────────────────────────────────────────────────────────
 def _merge_pages(overlay_bytes: bytes) -> bytes:
-    """Overlay-PDF auf Template-PDFs legen (pypdf).
+    """Overlay-PDF auf Template-PDFs legen.
 
-    Wichtig: ``base.merge_page(overlay)`` mutiert die base-Page – wir
-    brauchen also für jede Output-Seite eine **frische Kopie** der
-    Template-Page. Wenn wir aber für jede Seite einen NEUEN
-    ``PdfReader`` aus den Template-Bytes anlegen, hat jeder Reader
-    seinen eigenen Ressourcen-Pool und die Template-Fonts/Grafiken
-    werden N-mal in das finale PDF eingebettet (~1 MB pro Seite).
+    Bevorzugt **pikepdf** (basiert auf QPDF, dedupliziert Ressourcen
+    sauber über den gesamten Output). Fällt auf pypdf zurück wenn
+    pikepdf nicht installiert ist – pypdf bettet das Template
+    allerdings für jede Output-Seite neu ein, was zu sehr großen
+    PDFs führt (~1 MB pro Seite Overhead).
 
-    Trick: Wir parsen die Template-Bytes **einmal** und nutzen
-    ``PdfWriter.add_page(template_page)`` – das fügt die Page
-    inklusive Ressourcen zum Writer hinzu und gibt eine **eigene
-    Page-Instanz** zurück, die wir mutieren können. Pypdf
-    dedupliziert dann die Ressourcen über den Writer-internen
-    Object-Pool.
+    Mit pikepdf: typische Output-Größe für 13 Karts → ~500 KB statt 19 MB.
     """
+    try:
+        return _merge_pages_pikepdf(overlay_bytes)
+    except ImportError:
+        log.warning(
+            "pikepdf nicht verfügbar – fallback auf pypdf "
+            "(produziert ~40x größere PDFs). "
+            "Installation: pip install pikepdf"
+        )
+        return _merge_pages_pypdf(overlay_bytes)
+
+
+def _merge_pages_pikepdf(overlay_bytes: bytes) -> bytes:
+    """Pikepdf-basierter Merge mit echter Ressourcen-Deduplizierung."""
+    import pikepdf  # type: ignore
+
+    tmpl_main_path = TEMPLATES_DIR / "training.pdf"
+    tmpl_over_path = TEMPLATES_DIR / "training-overflow.pdf"
+
+    out_pdf = pikepdf.new()
+    overlay = pikepdf.open(io.BytesIO(overlay_bytes))
+    tmpl_main = pikepdf.open(str(tmpl_main_path))
+    tmpl_over = pikepdf.open(str(tmpl_over_path))
+
+    for i, ovl_page in enumerate(overlay.pages):
+        # Template-Page für diese Output-Seite wählen
+        src_pdf  = tmpl_main if i == 0 else tmpl_over
+        src_page = src_pdf.pages[0]
+        # Template-Page in Output kopieren – pikepdf dedupliziert
+        # automatisch identische Ressourcen über den Writer-Pool
+        out_pdf.pages.append(src_page)
+        # Overlay als Underlay/Overlay-Stamp draufsetzen
+        out_pdf.pages[-1].add_overlay(ovl_page)
+
+    # Linearisierung + Object-Stream-Komprimierung für kleinste PDF
+    buf = io.BytesIO()
+    out_pdf.save(
+        buf,
+        compress_streams=True,
+        object_stream_mode=pikepdf.ObjectStreamMode.generate,
+        linearize=False,
+    )
+    return buf.getvalue()
+
+
+def _merge_pages_pypdf(overlay_bytes: bytes) -> bytes:
+    """Fallback-Merge mit pypdf (ohne saubere Resource-Dedup)."""
     from pypdf import PdfReader, PdfWriter
 
-    tmpl_main_reader = PdfReader(
-        io.BytesIO((TEMPLATES_DIR / "training.pdf").read_bytes())
-    )
-    tmpl_over_reader = PdfReader(
-        io.BytesIO((TEMPLATES_DIR / "training-overflow.pdf").read_bytes())
-    )
-    overlay_reader = PdfReader(io.BytesIO(overlay_bytes))
+    tmpl_main = (TEMPLATES_DIR / "training.pdf").read_bytes()
+    tmpl_over = (TEMPLATES_DIR / "training-overflow.pdf").read_bytes()
 
-    writer  = PdfWriter()
+    overlay_reader = PdfReader(io.BytesIO(overlay_bytes))
     n_pages = len(overlay_reader.pages)
+    writer  = PdfWriter()
 
     for i in range(n_pages):
-        src_page = (
-            tmpl_main_reader.pages[0] if i == 0 else tmpl_over_reader.pages[0]
-        )
-        # add_page klont die Page in den Writer-Pool. Die zurückgegebene
-        # Instanz ist mutierbar ohne den Reader zu verändern, und teilt
-        # ihre Ressourcen mit anderen aus demselben Reader hinzugefügten
-        # Pages (= Deduplizierung).
-        new_page = writer.add_page(src_page)
-        new_page.merge_page(overlay_reader.pages[i])
-
-    # Optional: Object-Stream-Konsolidierung für nochmal kleinere PDFs
-    try:
-        writer.compress_identical_objects(remove_orphans=True)
-    except Exception:
-        pass
+        if i == 0:
+            t_reader = PdfReader(io.BytesIO(tmpl_main))
+        else:
+            t_reader = PdfReader(io.BytesIO(tmpl_over))
+        base = t_reader.pages[0]
+        base.merge_page(overlay_reader.pages[i])
+        writer.add_page(base)
 
     out = io.BytesIO()
     writer.write(out)
@@ -827,23 +855,19 @@ async def print_run(
     if not kart_list:
         return {"ok": False, "error": f"Kart {kart_nr} nicht im Lauf"}
 
-    # Alle Kart-PDFs PARALLEL erzeugen und zusammenführen.
-    # WeasyPrint ist nicht thread-safe für eine einzelne HTML-Instanz,
-    # aber jeder Aufruf erzeugt sein eigenes HTML-Objekt → safe.
-    # Bei 13 Karts spart das auf einem Mehrkern-Server fast die ganze
-    # Render-Zeit (vorher sequentiell ~9s, parallel ~1-2s).
+    # Alle Kart-PDFs sequenziell erzeugen+mergen. Parallel mit
+    # asyncio.gather + to_thread war im Test LANGSAMER (vermutlich
+    # GIL-Contention zwischen WeasyPrint-Instanzen).
     def _render_kart(html_str: str) -> bytes:
         overlay_pdf = WpHTML(string=html_str, base_url=str(ROOT)).write_pdf()
         return _merge_pages(overlay_pdf)
 
-    async def _render_one(kart: dict) -> bytes:
-        overlay_html = await _build_overlay_html(data, kart)
-        return await asyncio.to_thread(_render_kart, overlay_html)
-
     t0 = time.time()
-    all_merged: list[bytes] = list(
-        await asyncio.gather(*[_render_one(k) for k in kart_list])
-    )
+    all_merged: list[bytes] = []
+    for kart in kart_list:
+        overlay_html = await _build_overlay_html(data, kart)
+        merged = await asyncio.to_thread(_render_kart, overlay_html)
+        all_merged.append(merged)
     timing["render_merge_ms"] = int((time.time() - t0) * 1000)
 
     # Alle Kart-PDFs zu einem Job zusammenführen

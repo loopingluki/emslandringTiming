@@ -3,3 +3,4 @@ uvicorn[standard]>=0.27.0
 aiosqlite>=0.20.0
 python-multipart>=0.0.9
 firebase-admin>=6.0.0
+pikepdf>=8.0.0
