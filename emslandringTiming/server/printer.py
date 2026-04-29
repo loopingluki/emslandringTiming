@@ -955,13 +955,18 @@ async def print_run(
         log.warning("Konnte Debug-PDFs nicht schreiben: %s", exc)
 
     log.info(
-        "[print_run] run=%s karts=%d merged=%.1fKB optimized=%.1fKB (%d%%) "
-        "render=%dms gs=%dms",
+        "[print_run] run=%s karts=%d overlay=%.1fKB combined=%.1fKB "
+        "merged=%.1fKB optimized=%.1fKB (%d%%) "
+        "render=%dms concat=%dms merge=%dms gs=%dms",
         run_id, len(all_merged),
+        sizes.get("overlay_bytes", 0) / 1024,
+        sizes.get("combined_overlay_bytes", 0) / 1024,
         sizes["merged_bytes"] / 1024,
         sizes["optimized_bytes"] / 1024,
         sizes["ratio_pct"],
-        timing["render_merge_ms"],
+        timing.get("render_ms", 0),
+        timing.get("concat_overlays_ms", 0),
+        timing.get("merge_template_ms", 0),
         timing["optimize_ms"],
     )
 
