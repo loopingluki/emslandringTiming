@@ -299,9 +299,9 @@ class RaceEngine:
         })
         await self._broadcast_kart_table()
 
-        # Defekt-Erkennung: gewichteter gleitender Durchschnitt prüfen
-        if lap_us is not None and self.status in ("running", "finishing"):
-            await self._check_defect(kart, transponder_id)
+        # Live-Defekt-Erkennung deaktiviert – Anzeige passiert nur im
+        # Transponder-Modal (Phase 1, Test). Falls wir später wieder
+        # einen Live-Alert wollen: hier _check_defect() reaktivieren.
 
         # GP Runden: Prüfen ob Führender Rundenziel erreicht
         if (
@@ -634,34 +634,30 @@ class RaceEngine:
         await ampel.send_seq(key)
 
     async def _check_defect(self, kart: KartState, transponder_id: int) -> None:
-        """Prüft auf Defekt-Verdacht: gewichteter gleitender Durchschnitt
-        der letzten N Runden über Schwelle. Sendet einmalig pro Kart und
-        Lauf eine ``defect_alert``-WS-Nachricht."""
+        """Prüft auf Defekt-Verdacht (aktuell DEAKTIVIERT – wird im
+        Transponder-Modal client-seitig berechnet). Wenn wir später
+        wieder einen Live-Alert wollen, hier bei Bedarf reaktivieren.
+
+        Liest die Klassen-spezifische Schwelle aus
+        ``defect_categories[kart_class]``."""
         c = cfg.get()
-        if not c.get("defect_detection_enabled"):
-            return
         if kart.kart_nr in self._defect_alerted:
-            return  # schon gemeldet, kein Spam
-        # Klassen-Filter (nur konfigurierte Klassen prüfen)
+            return
         info = cfg.get_kart_info(transponder_id) or {}
         kart_class = info.get("class", "")
-        if kart_class not in c.get("defect_classes", []):
+        cat = (c.get("defect_categories") or {}).get(kart_class) or {}
+        if not cat.get("enabled"):
             return
-        min_laps  = int(c.get("defect_min_laps", 3))
-        window    = int(c.get("defect_window", 5))
-        threshold = int(c.get("defect_threshold_us", 70_000_000))
-        if kart.laps < min_laps:
-            return
-        # Gewichteter gleitender Durchschnitt – neueste Runde am höchsten
+        window    = int(cat.get("window", 5))
+        threshold = int(cat.get("threshold_sec", 70)) * 1_000_000
         recent = kart.lap_times_us[-window:]
-        if not recent:
+        if len(recent) < window:
             return
-        weights = list(range(1, len(recent) + 1))  # älteste=1, neueste=N
+        weights = list(range(1, len(recent) + 1))
         total_weight = sum(weights)
         wma = int(sum(w * x for w, x in zip(weights, recent)) / total_weight)
         if wma <= threshold:
             return
-        # Alarm! Einmalig pro Lauf je Kart
         self._defect_alerted.add(kart.kart_nr)
         await hub.broadcast({
             "type": "defect_alert",

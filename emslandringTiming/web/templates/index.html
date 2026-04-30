@@ -145,34 +145,6 @@
         </div>
       </div>
       <div class="settings-section">
-        <h3>Defekt-Erkennung</h3>
-        <div class="settings-grid">
-          <div class="form-group">
-            <label>Aktiviert</label>
-            <select id="s-defect-enabled">
-              <option value="1">Ja</option>
-              <option value="0">Nein</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Schwelle (Sek pro Runde)</label>
-            <input type="number" id="s-defect-threshold" min="10" max="600" step="1">
-          </div>
-          <div class="form-group">
-            <label>Mindest-Runden bis Prüfung</label>
-            <input type="number" id="s-defect-min-laps" min="1" max="20">
-          </div>
-          <div class="form-group">
-            <label>WMA-Fenster (letzte N Runden)</label>
-            <input type="number" id="s-defect-window" min="2" max="20">
-          </div>
-          <div class="form-group" style="grid-column:1/-1">
-            <label>Klassen die geprüft werden</label>
-            <div id="s-defect-classes" style="display:flex;flex-wrap:wrap;gap:10px;padding:6px 0"></div>
-          </div>
-        </div>
-      </div>
-      <div class="settings-section">
         <h3>Darstellung</h3>
         <div class="settings-grid">
           <div class="form-group">
@@ -264,6 +236,38 @@
               <label>Relais GRÜN <small style="color:var(--text-muted)">(Nr. laut Web-UI, 1–8)</small></label>
               <input type="number" id="s-ampel-relay-green" min="1" max="8" value="6">
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Defekt-Erkennung pro Kart-Klasse -->
+      <div class="settings-section">
+        <h3>Defekt-Erkennung</h3>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 10px">
+          Pro Kart-Klasse separat einstellbar. Aktuell wird ausschließlich
+          ein "Defekt-Verdacht"-Badge im Transponder-Modal angezeigt
+          (kein Live-Alarm im Timing). Das Badge verschwindet automatisch,
+          wenn der WMA wieder unterhalb der Schwelle liegt (z.B. nach
+          Reparatur).
+        </p>
+        <div style="margin-bottom:10px">
+          <div class="range-pills" id="s-defect-pills"></div>
+        </div>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>Aktiviert</label>
+            <select id="s-defect-cat-enabled">
+              <option value="1">Ja</option>
+              <option value="0">Nein</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Schwelle (Sek pro Runde)</label>
+            <input type="number" id="s-defect-cat-threshold" min="10" max="600" step="1">
+          </div>
+          <div class="form-group">
+            <label>WMA-Fenster (letzte N Runden)</label>
+            <input type="number" id="s-defect-cat-window" min="2" max="50">
           </div>
         </div>
       </div>
@@ -622,10 +626,8 @@
         <div class="header-spacer"></div>
         <span style="font-size:10px;color:var(--text-dim)">Anzahl:</span>
         <span id="td-laps-count" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums">–</span>
-        <span style="font-size:10px;color:var(--text-dim)">WMA5:</span>
-        <span id="td-laps-wma5" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums">–</span>
-        <span style="font-size:10px;color:var(--text-dim)">SMA10:</span>
-        <span id="td-laps-sma10" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums">–</span>
+        <span style="font-size:10px;color:var(--text-dim)" id="td-laps-wma-label">WMA:</span>
+        <span id="td-laps-wma" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums">–</span>
         <span id="td-laps-warn" style="display:none;font-size:11px;font-weight:600;color:var(--red);background:var(--red-bg);padding:1px 6px;border-radius:3px">⚠ DEFEKT-VERDACHT</span>
       </div>
       <div id="td-laps-list" style="max-height:120px;overflow-y:auto;background:var(--bg);border-radius:4px;padding:6px;display:flex;flex-wrap:wrap;gap:4px;font-size:11px;font-variant-numeric:tabular-nums"></div>
