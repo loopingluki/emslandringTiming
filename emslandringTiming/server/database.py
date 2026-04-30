@@ -124,6 +124,25 @@ async def get_passings_for_run(run_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_last_lap_times(transponder_id: int, limit: int = 50) -> list[dict]:
+    """Letzte N Rundenzeiten eines Transponders (chronologisch absteigend
+    – neueste zuerst). Nur gewertete Runden (lap_time_us NOT NULL)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT p.id, p.lap_time_us, p.timestamp_us, p.strength,
+                      p.run_id, r.date AS run_date, r.started_at AS run_started_at
+               FROM passings p
+               LEFT JOIN runs r ON p.run_id = r.id
+               WHERE p.transponder_id = ? AND p.lap_time_us IS NOT NULL
+               ORDER BY p.id DESC
+               LIMIT ?""",
+            (transponder_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def set_run_kart_name(run_id: int, kart_nr: int, name: str) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(

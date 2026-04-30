@@ -170,6 +170,15 @@ function handleMsg(msg) {
       // Decoder-Status zuerst aktualisieren – damit er auch bei späterem Fehler sichtbar ist
       updateDecoderStatus(state.decoder);
       if (msg.ampel) updateAmpelDebug(msg.ampel);
+      // Defekt-Konfig vom Server holen damit Transponder-Modal sie nutzen kann
+      fetch('/api/settings').then(r => r.json()).then(s => {
+        state.settings = state.settings || {};
+        state.settings.defect = {
+          enabled:      !!s.defect_detection_enabled,
+          threshold_us: s.defect_threshold_us || 70_000_000,
+          classes:      s.defect_classes || [],
+        };
+      }).catch(() => {});
       if (msg.runs_today) {
         state.runs = msg.runs_today;
         renderRunList();
@@ -266,6 +275,16 @@ function handleMsg(msg) {
 
     case 'print_error':
       showToast(`✗ Druck-Fehler: ${msg.error || 'unbekannt'}`, 'err');
+      break;
+
+    case 'defect_alert':
+      // Sehr auffälliger Toast – soll im Betrieb nicht überlesen werden.
+      showToast(
+        `⚠ Defekt-Verdacht: Kart ${msg.kart_nr} (${msg.name}) – ` +
+        `Ø ${fmtTime(msg.wma_us)} > ${fmtTime(msg.threshold_us)} ` +
+        `(nach ${msg.laps} Runden)`,
+        'err',
+      );
       break;
 
     case 'debug_decoder':
@@ -1351,6 +1370,32 @@ async function loadSettings() {
   document.getElementById('s-gp-laps').value     = s.gp_laps_count;
   document.getElementById('s-wait-time').value   = s.wait_time_sec;
   document.getElementById('s-wait-time-gp').value= s.wait_time_gp_sec;
+
+  // Defekt-Erkennung (Schwelle in µs ↔ Sek umrechnen)
+  document.getElementById('s-defect-enabled').value =
+    s.defect_detection_enabled ? '1' : '0';
+  document.getElementById('s-defect-threshold').value =
+    Math.round((s.defect_threshold_us || 70_000_000) / 1_000_000);
+  document.getElementById('s-defect-min-laps').value = s.defect_min_laps ?? 3;
+  document.getElementById('s-defect-window').value   = s.defect_window ?? 5;
+  // Klassen-Checkboxen aus s.classes generieren, aktive aus defect_classes
+  const dcDiv = document.getElementById('s-defect-classes');
+  const active = new Set(s.defect_classes || []);
+  dcDiv.innerHTML = (s.classes || []).map(c =>
+    `<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer">
+       <input type="checkbox" class="s-defect-class-cb" data-class="${c.name}"
+              ${active.has(c.name) ? 'checked' : ''}>
+       ${c.name}
+     </label>`
+  ).join('');
+
+  // Auch in state.settings cachen damit Transponder-Modal Bescheid weiß
+  state.settings = state.settings || {};
+  state.settings.defect = {
+    enabled:      !!s.defect_detection_enabled,
+    threshold_us: s.defect_threshold_us || 70_000_000,
+    classes:      s.defect_classes || [],
+  };
   document.getElementById('s-decoder-ip').value  = s.decoder_ip;
   document.getElementById('s-decoder-port').value= s.decoder_port;
   document.getElementById('s-http-port').value   = s.http_port;
@@ -1477,6 +1522,13 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     ampel_enabled:      document.getElementById('s-ampel-enabled').checked,
     ampel_relay_red:    +document.getElementById('s-ampel-relay-red').value   || 4,
     ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 6,
+    // Defekt-Erkennung
+    defect_detection_enabled: document.getElementById('s-defect-enabled').value === '1',
+    defect_threshold_us:     (+document.getElementById('s-defect-threshold').value || 70) * 1_000_000,
+    defect_min_laps:         +document.getElementById('s-defect-min-laps').value || 3,
+    defect_window:           +document.getElementById('s-defect-window').value   || 5,
+    defect_classes:          [...document.querySelectorAll('.s-defect-class-cb:checked')]
+                                .map(cb => cb.dataset.class),
   };
   await fetch('/api/settings', {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1562,6 +1614,55 @@ async function openTransponderModal(transponder_id) {
     _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
     drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
   } catch(_) {}
+
+  // Letzte 50 Rundenzeiten + gleitende Durchschnitte laden
+  try {
+    const lt = await fetch(`/api/transponders/${transponder_id}/lap-times?limit=50`).then(r => r.json());
+    renderLapTimes(lt, t.class);
+  } catch(_) {
+    document.getElementById('td-laps-list').innerHTML =
+      '<span style="color:var(--text-muted)">Fehler beim Laden</span>';
+  }
+}
+
+function renderLapTimes(data, kart_class) {
+  document.getElementById('td-laps-count').textContent = data.count;
+  document.getElementById('td-laps-wma5').textContent  = fmtTime(data.wma5_us);
+  document.getElementById('td-laps-sma10').textContent = fmtTime(data.sma10_us);
+
+  // Defekt-Erkennung: prüfen ob WMA5 über Schwelle für diese Klasse
+  const warn = document.getElementById('td-laps-warn');
+  warn.style.display = 'none';
+  const def = (state.settings || {}).defect || {};
+  if (def.enabled && data.wma5_us
+      && (def.classes || []).includes(kart_class)
+      && data.wma5_us > (def.threshold_us || 60_000_000)) {
+    warn.style.display = '';
+  }
+
+  const list = document.getElementById('td-laps-list');
+  if (!data.lap_times || !data.lap_times.length) {
+    list.innerHTML = '<span style="color:var(--text-muted)">Noch keine Runden</span>';
+    return;
+  }
+  // Median für Farb-Heuristik (extreme Ausreißer rot markieren)
+  const times = data.lap_times.map(l => l.lap_time_us).filter(x => x).sort((a,b)=>a-b);
+  const median = times[Math.floor(times.length/2)] || 0;
+  const slow = median * 1.15;   // > +15% gegenüber Median = langsam
+  const fast = median * 0.95;   // < -5% gegenüber Median = schnell
+
+  list.innerHTML = data.lap_times.map((l, i) => {
+    const us = l.lap_time_us;
+    let cls = '';
+    if (us > slow) cls = 'lap-slow';
+    else if (us < fast) cls = 'lap-fast';
+    const date = l.run_started_at
+      ? new Date(l.run_started_at * 1000).toLocaleString('de-DE',
+          { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+      : '';
+    const idx = data.count - i;   // Lauf-Index absteigend (neueste = höchste Nr)
+    return `<span class="lap-chip-td ${cls}" title="${date}">${idx}: ${fmtTime(us)}</span>`;
+  }).join('');
 }
 
 let _tdChartData = [];

@@ -469,6 +469,38 @@ async def api_transponder_history(transponder_id: int, days: int = 0):
     return await database.get_transponder_strength_history(transponder_id, since_unix=since)
 
 
+@app.get("/api/transponders/{transponder_id}/lap-times")
+async def api_transponder_lap_times(transponder_id: int, limit: int = 50):
+    """Letzte N Rundenzeiten + gleitender Durchschnitt.
+
+    Gibt zusätzlich avg_us (gewichteter Durchschnitt der letzten 5 Runden)
+    sowie sma5/sma10 (einfache gleitende Durchschnitte) zurück, damit das
+    Frontend ein Defekt-Indikator-Wert hat."""
+    laps = await database.get_last_lap_times(transponder_id, limit=limit)
+    # Liste ist DESC (neueste zuerst). Für gleitenden Durchschnitt
+    # nehmen wir die N neuesten Runden.
+    times = [l["lap_time_us"] for l in laps if l.get("lap_time_us")]
+
+    def _wma(xs: list[int]) -> int | None:
+        if not xs:
+            return None
+        # Linear gewichtet: neueste = höchstes Gewicht (xs[0] ist neueste)
+        weights = list(range(len(xs), 0, -1))  # [n, n-1, ..., 1]
+        total_weight = sum(weights)
+        return int(sum(w * x for w, x in zip(weights, xs)) / total_weight)
+
+    def _sma(xs: list[int]) -> int | None:
+        return int(sum(xs) / len(xs)) if xs else None
+
+    return {
+        "lap_times": laps,
+        "count": len(laps),
+        "wma5_us":  _wma(times[:5]),
+        "sma5_us":  _sma(times[:5]),
+        "sma10_us": _sma(times[:10]),
+    }
+
+
 @app.post("/api/transponders")
 async def api_add_transponder(body: dict):
     t_id = str(body.get("transponder_id", "")).strip()

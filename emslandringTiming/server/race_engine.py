@@ -106,6 +106,10 @@ class RaceEngine:
         self._finish_wait_total: int = 0
         self._finish_phase: str = ""   # "waiting_leader" | "waiting_others"
 
+        # Defekt-Erkennung: gemeldete Karts (pro Lauf) – verhindert dass
+        # die gleiche Warnung pro Runde erneut feuert.
+        self._defect_alerted: set[int] = set()
+
     def _finish_remaining(self) -> int:
         if self.status != "finishing" or not self._finish_wait_total:
             return 0
@@ -140,6 +144,7 @@ class RaceEngine:
         self.remaining_sec = float(run["duration_sec"])
         self.elapsed_sec = 0.0
         self._finish_phase = ""
+        self._defect_alerted = set()
 
         self.status = "armed"
         await database.update_run(run_id, status="armed")
@@ -293,6 +298,10 @@ class RaceEngine:
             "position": position,
         })
         await self._broadcast_kart_table()
+
+        # Defekt-Erkennung: gewichteter gleitender Durchschnitt prüfen
+        if lap_us is not None and self.status in ("running", "finishing"):
+            await self._check_defect(kart, transponder_id)
 
         # GP Runden: Prüfen ob Führender Rundenziel erreicht
         if (
@@ -623,6 +632,46 @@ class RaceEngine:
     async def _ampel_seq(self, key: str) -> None:
         """Sendet den konfigurierten Ampel-Zustand für ein Ereignis."""
         await ampel.send_seq(key)
+
+    async def _check_defect(self, kart: KartState, transponder_id: int) -> None:
+        """Prüft auf Defekt-Verdacht: gewichteter gleitender Durchschnitt
+        der letzten N Runden über Schwelle. Sendet einmalig pro Kart und
+        Lauf eine ``defect_alert``-WS-Nachricht."""
+        c = cfg.get()
+        if not c.get("defect_detection_enabled"):
+            return
+        if kart.kart_nr in self._defect_alerted:
+            return  # schon gemeldet, kein Spam
+        # Klassen-Filter (nur konfigurierte Klassen prüfen)
+        info = cfg.get_kart_info(transponder_id) or {}
+        kart_class = info.get("class", "")
+        if kart_class not in c.get("defect_classes", []):
+            return
+        min_laps  = int(c.get("defect_min_laps", 3))
+        window    = int(c.get("defect_window", 5))
+        threshold = int(c.get("defect_threshold_us", 70_000_000))
+        if kart.laps < min_laps:
+            return
+        # Gewichteter gleitender Durchschnitt – neueste Runde am höchsten
+        recent = kart.lap_times_us[-window:]
+        if not recent:
+            return
+        weights = list(range(1, len(recent) + 1))  # älteste=1, neueste=N
+        total_weight = sum(weights)
+        wma = int(sum(w * x for w, x in zip(weights, recent)) / total_weight)
+        if wma <= threshold:
+            return
+        # Alarm! Einmalig pro Lauf je Kart
+        self._defect_alerted.add(kart.kart_nr)
+        await hub.broadcast({
+            "type": "defect_alert",
+            "kart_nr": kart.kart_nr,
+            "name": kart.name,
+            "class": kart_class,
+            "wma_us": wma,
+            "threshold_us": threshold,
+            "laps": kart.laps,
+        })
 
     def snapshot(self) -> dict:
         sorted_karts = self._sorted_karts()

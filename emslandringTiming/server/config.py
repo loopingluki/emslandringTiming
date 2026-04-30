@@ -32,6 +32,14 @@ _DEFAULTS: dict = {
     "ampel_seq_done":             "off",
     "ampel_seq_disarm":           "off",
     "emulator_enabled":           True,
+    # Defekt-Erkennung: schlägt während eines Laufs Alarm wenn der
+    # gleitende Durchschnitt der letzten N Runden eines Karts eine
+    # konfigurierte Schwelle übersteigt. Sinnvoll v.a. für Leihkarts.
+    "defect_detection_enabled":   True,
+    "defect_threshold_us":        70_000_000,    # 1:10.000 (in µs)
+    "defect_min_laps":            3,             # erst nach N Runden prüfen
+    "defect_window":              5,             # Anzahl Runden für WMA
+    "defect_classes":             ["Leihkart"],  # nur diese Klassen prüfen
     "classes": [
         {"name": "Minikart",  "color": "#f9a800"},
         {"name": "Leihkart",  "color": "#1565c0"},

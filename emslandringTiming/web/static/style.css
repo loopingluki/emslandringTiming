@@ -601,6 +601,19 @@ tr.lap-detail td {
 }
 .lap-chip.best { color: var(--green); border-color: var(--green); background: var(--green-bg); }
 
+/* Chips im Transponder-Detail (letzte 50 Runden) */
+.lap-chip-td {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+.lap-chip-td.lap-slow { color: var(--red);    border-color: var(--red);    background: var(--red-bg); }
+.lap-chip-td.lap-fast { color: var(--green);  border-color: var(--green);  background: var(--green-bg); }
+
 /* ─── Empty State ────────────────────────────────────────────────────────── */
 #empty-state {
   display: flex;
