@@ -614,6 +614,22 @@ tr.lap-detail td {
 .lap-chip-td.lap-slow { color: var(--red);    border-color: var(--red);    background: var(--red-bg); }
 .lap-chip-td.lap-fast { color: var(--green);  border-color: var(--green);  background: var(--green-bg); }
 
+/* Defekt-Warndreieck in Transponder-Tabelle */
+.defect-warn {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--red);
+  font-size: 14px;
+  line-height: 1;
+  text-shadow: 0 0 6px rgba(229, 57, 53, 0.5);
+  animation: defect-pulse 1.6s ease-in-out infinite;
+}
+@keyframes defect-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+tr.has-defect td:nth-child(2) { color: var(--red); font-weight: 600; }
+
 /* ─── Empty State ────────────────────────────────────────────────────────── */
 #empty-state {
   display: flex;

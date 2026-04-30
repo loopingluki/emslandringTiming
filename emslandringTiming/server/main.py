@@ -377,6 +377,27 @@ async def api_skip_run(run_id: int):
 async def api_transponders():
     stats = await database.get_transponder_stats()
     transponders = cfg.get()["transponders"]
+    # Bulk-Query: letzte 50 Rundenzeiten pro Transponder in einem Roundtrip
+    # (deutlich schneller als per-Transponder).
+    cats = cfg.get().get("defect_categories", {})
+    recent_laps = await database.get_recent_lap_times_bulk(limit_per_transponder=50)
+
+    def _wma_defect(class_name: str, lap_times: list[int]) -> bool:
+        cat = cats.get(class_name) or {}
+        if not cat.get("enabled"):
+            return False
+        window    = max(2, int(cat.get("window", 5)))
+        threshold = int(cat.get("threshold_sec", 70)) * 1_000_000
+        recent = lap_times[:window]
+        if len(recent) < window:
+            # Erst Defekt melden wenn das Fenster gefüllt ist (sonst False
+            # Positives durch eine einzelne langsame Runde direkt am Anfang).
+            return False
+        weights = list(range(len(recent), 0, -1))  # neueste = höchstes Gewicht
+        total_w = sum(weights)
+        wma = sum(w * x for w, x in zip(weights, recent)) / total_w
+        return wma > threshold
+
     result = []
     for t_id_str, info in transponders.items():
         t_id = int(t_id_str)
@@ -393,6 +414,7 @@ async def api_transponders():
             "total_us": total_us,
             "avg_strength": stat.get("avg_strength", 0),
             "last_seen_us": stat.get("last_seen_us"),
+            "defect": _wma_defect(info["class"], recent_laps.get(t_id, [])),
         })
     result.sort(key=lambda x: x["kart_nr"])
     return result

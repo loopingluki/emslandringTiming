@@ -143,6 +143,37 @@ async def get_last_lap_times(transponder_id: int, limit: int = 50) -> list[dict]
     return [dict(r) for r in rows]
 
 
+async def get_recent_lap_times_bulk(limit_per_transponder: int = 50) -> dict[int, list[int]]:
+    """Holt für ALLE Transponder die letzten N gewerteten Rundenzeiten
+    in einem Call. Rückgabe: {transponder_id: [lap_time_us, …]} mit
+    neueste zuerst.
+
+    Effizient implementiert per ROW_NUMBER() Window-Funktion – nur ein
+    SQLite-Roundtrip statt einer Query pro Transponder.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT transponder_id, lap_time_us FROM (
+                   SELECT transponder_id, lap_time_us,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY transponder_id
+                              ORDER BY id DESC
+                          ) AS rn
+                   FROM passings
+                   WHERE lap_time_us IS NOT NULL
+               )
+               WHERE rn <= ?
+               ORDER BY transponder_id, rn""",
+            (limit_per_transponder,),
+        ) as cur:
+            rows = await cur.fetchall()
+    result: dict[int, list[int]] = {}
+    for r in rows:
+        result.setdefault(r["transponder_id"], []).append(r["lap_time_us"])
+    return result
+
+
 async def set_run_kart_name(run_id: int, kart_nr: int, name: str) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(

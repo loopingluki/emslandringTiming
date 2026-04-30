@@ -1582,9 +1582,12 @@ function renderTransponderTable(data) {
   tbody.innerHTML = data.map(t => {
     const color    = classColor(t.class);
     const totalStr = t.total_us ? fmtUs(t.total_us) : '–';
-    return `<tr class="transponder-row" data-transponder-id="${t.transponder_id}" style="cursor:pointer">
+    const defectIcon = t.defect
+      ? `<span class="defect-warn" title="Defekt-Verdacht – WMA über Schwelle">⚠</span>`
+      : '';
+    return `<tr class="transponder-row ${t.defect ? 'has-defect' : ''}" data-transponder-id="${t.transponder_id}" style="cursor:pointer">
       <td>${t.kart_nr}</td>
-      <td>${t.name}</td>
+      <td>${defectIcon}${t.name}</td>
       <td><span class="class-badge" style="background:${color}22;color:${color};border:1px solid ${color}44">${t.class}</span></td>
       <td style="color:var(--text-dim)">${t.transponder_id}</td>
       <td class="num">${t.passing_count}</td>
