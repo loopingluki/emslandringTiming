@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS decoder_health (
     noise       INTEGER,
     loop_signal INTEGER
 );
+
+-- Indizes für Performance bei wachsender Datenmenge
+-- (ohne idx_passings_transponder_id würden GROUP BY und Window-
+-- Funktionen wie ROW_NUMBER() OVER (PARTITION BY transponder_id ...)
+-- bei vielen 1000 Passings einen full-table-scan brauchen.
+-- Mit Index: O(log n) lookups, Defekt-Erkennung bleibt schnell auch
+-- bei mehreren 100k Passings).
+CREATE INDEX IF NOT EXISTS idx_passings_transponder_id ON passings(transponder_id);
+CREATE INDEX IF NOT EXISTS idx_passings_run_id         ON passings(run_id);
+CREATE INDEX IF NOT EXISTS idx_runs_date               ON runs(date);
+CREATE INDEX IF NOT EXISTS idx_decoder_health_recorded ON decoder_health(recorded_at);
 """
 
 
