@@ -45,6 +45,13 @@ async def lifespan(app: FastAPI):
     ampel.start()
     health_task = asyncio.create_task(_health_logger_loop(), name="health-logger")
 
+    # PDF-Render-Process-Pool vorwärmen, damit der erste Druck nicht
+    # ~2-3s warten muss bis die Worker WeasyPrint geladen haben.
+    try:
+        printer._ensure_pdf_pool()
+    except Exception as exc:
+        print(f"[lifespan] PDF-Pool konnte nicht initialisiert werden: {exc}")
+
     # Läufe die beim letzten Absturz im Status running/paused/armed steckten → done
     runs = await database.get_runs_for_date(date.today().isoformat())
     for r in runs:
@@ -58,6 +65,12 @@ async def lifespan(app: FastAPI):
         await health_task
     except asyncio.CancelledError:
         pass
+    # Process-Pool sauber beenden
+    if printer._pdf_pool is not None:
+        try:
+            printer._pdf_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
     await hub.stop_keepalive()
     await decoder.stop()
     await emulator.stop()

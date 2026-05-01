@@ -516,6 +516,12 @@ table#kart-table tbody tr.kart-row.finished td.kart-name { color: var(--green); 
 html[data-theme="light"] table#kart-table tbody tr.kart-row.finished { background: #00FFFF; }
 html[data-theme="light"] table#kart-table tbody tr.kart-row.finished td.kart-name { color: #005d66; }
 
+/* Kontrast Dunkel: das Standard-Dunkelgrün ist im Kontrast-Theme zu dunkel –
+   Cyan liefert deutlich mehr Kontrast und macht die durchgefahrenen Karts
+   sofort erkennbar. */
+html[data-theme="contrast-dark"] table#kart-table tbody tr.kart-row.finished { background: #0d4a4a; }
+html[data-theme="contrast-dark"] table#kart-table tbody tr.kart-row.finished td.kart-name { color: #00ffff; font-weight: 700; }
+
 table#kart-table td {
   padding: 9px 10px;
   vertical-align: middle;
