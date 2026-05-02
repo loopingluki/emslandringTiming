@@ -500,7 +500,7 @@ table#kart-table thead th {
   top: 0;
   z-index: 1;
 }
-th.num { text-align: right; }
+th.num { text-align: left; }
 
 table#kart-table tbody tr.kart-row {
   border-bottom: 1px solid var(--border);
@@ -527,7 +527,7 @@ table#kart-table td {
   vertical-align: middle;
   white-space: nowrap;
 }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.num { text-align: left; font-variant-numeric: tabular-nums; }
 td.pos {
   font-weight: 700;
   font-size: 14px;
