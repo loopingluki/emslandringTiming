@@ -3,8 +3,53 @@ import database
 import config as cfg
 
 
+async def cleanup_stale_active_runs(before_date: str | None = None) -> int:
+    """Räumt hängengebliebene aktive Läufe (armed/running/paused/finishing)
+    auf indem sie auf 'done' gesetzt werden.
+
+    * ``before_date=None`` → alle aktiven Läufe (z.B. nach Server-Restart;
+      die Engine startet immer fresh, also kann nichts wirklich aktiv sein)
+    * ``before_date='2026-05-04'`` → nur Läufe **vor** diesem Datum
+      (z.B. Tagesübergang: heutige Läufe sollen nicht angefasst werden)
+
+    Setzt zusätzlich die Race-Engine zurück, falls sie auf einen der
+    bereinigten Läufe zeigt – sonst kann der Operator am neuen Tag keinen
+    neuen Lauf scharf schalten weil die Engine noch denkt sie sei armed.
+
+    Rückgabe: Anzahl bereinigter Läufe.
+    """
+    stale = await database.get_stale_active_runs(before_date)
+    if not stale:
+        return 0
+
+    stale_ids = {r["id"] for r in stale}
+    print(
+        f"[run_manager] Cleanup: {len(stale)} hängengebliebener Lauf/Läufe "
+        f"({', '.join(r['name'] + ' (' + r['date'] + ', ' + r['status'] + ')' for r in stale)}) "
+        "→ werden auf 'done' gesetzt"
+    )
+    for r in stale:
+        await database.update_run(r["id"], status="done")
+
+    # Engine zurücksetzen falls sie auf einen der bereinigten Läufe zeigt
+    try:
+        from race_engine import engine
+        if engine.run_id in stale_ids:
+            print(f"[run_manager] Race-Engine wird zurückgesetzt (war auf Lauf {engine.run_id})")
+            await engine.force_reset()
+    except Exception as exc:
+        print(f"[run_manager] Engine-Cleanup fehlgeschlagen: {exc}")
+
+    return len(stale)
+
+
 async def ensure_today_runs() -> None:
     today = _date.today().isoformat()
+    # Beim Tageswechsel: alle aktiven Läufe von gestern oder älter abschließen.
+    # So kann der Operator am neuen Tag direkt mit Lauf 1 starten,
+    # auch wenn am Vortag ein scharfgeschalteter Lauf nie ausgeführt wurde.
+    await cleanup_stale_active_runs(before_date=today)
+
     existing = await database.get_runs_for_date(today)
     if existing:
         return

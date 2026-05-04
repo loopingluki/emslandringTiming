@@ -165,6 +165,29 @@ class RaceEngine:
         await self._ampel_seq("ampel_seq_disarm")
         await self._broadcast_run_list_update()
 
+    async def force_reset(self) -> None:
+        """Setzt die Engine bedingungslos auf den Initial-Zustand zurück.
+        Wird vom run_manager-Cleanup aufgerufen, wenn ein hängengebliebener
+        Lauf von einem früheren Tag entdeckt und auf 'done' gesetzt wird –
+        sonst würde die Engine weiterhin denken sie sei armed und neue
+        Läufe ließen sich nicht scharf schalten."""
+        await self._cancel_tasks()
+        self.run_id = None
+        self.run = None
+        self.status = "none"
+        self.karts = {}
+        self.kart_names = {}
+        self.first_karts_seen = set()
+        self.remaining_sec = 0.0
+        self.elapsed_sec = 0.0
+        self._finish_phase = ""
+        self._finish_wait_total = 0
+        try:
+            await hub.broadcast({"type": "run_state", "status": "none"})
+            await self._broadcast_run_list_update()
+        except Exception:
+            pass
+
     async def start_gp(self) -> None:
         if self.status != "armed" or self.run is None:
             raise ValueError("Kein bewaffneter Grand-Prix-Lauf")

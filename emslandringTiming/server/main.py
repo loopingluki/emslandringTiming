@@ -52,11 +52,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         print(f"[lifespan] PDF-Pool konnte nicht initialisiert werden: {exc}")
 
-    # Läufe die beim letzten Absturz im Status running/paused/armed steckten → done
-    runs = await database.get_runs_for_date(date.today().isoformat())
-    for r in runs:
-        if r["status"] in ("running", "paused", "finishing", "armed"):
-            await database.update_run(r["id"], status="done")
+    # Beim Server-Start: alle hängengebliebenen aktiven Läufe (egal welches
+    # Datum) auf 'done' setzen. Die Race-Engine startet immer fresh, also
+    # kann zu diesem Zeitpunkt definitionsgemäß kein Lauf wirklich laufen.
+    await run_manager.cleanup_stale_active_runs()
 
     yield
 

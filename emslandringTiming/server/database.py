@@ -77,6 +77,29 @@ async def get_runs_for_date(date: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_stale_active_runs(before_date: str | None = None) -> list[dict]:
+    """Liefert Läufe die noch in einem aktiven Status (armed/running/
+    paused/finishing) hängen. Wenn ``before_date`` gesetzt ist, werden
+    nur Läufe **vor** diesem Datum zurückgegeben (z.B. Tagesübergang).
+    Sonst alle aktiven Läufe (z.B. nach Server-Crash/-Neustart)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if before_date:
+            sql = ("SELECT * FROM runs "
+                   "WHERE status IN ('armed','running','paused','finishing') "
+                   "  AND date < ? "
+                   "ORDER BY date, run_number")
+            params = (before_date,)
+        else:
+            sql = ("SELECT * FROM runs "
+                   "WHERE status IN ('armed','running','paused','finishing') "
+                   "ORDER BY date, run_number")
+            params = ()
+        async with db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def get_run(run_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
