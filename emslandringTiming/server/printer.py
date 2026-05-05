@@ -765,8 +765,19 @@ def _ensure_pdf_pool():
     WeasyPrint hält das GIL während dem Rendering, daher bringen Threads
     nichts (serielle Ausführung). Mit ProcessPoolExecutor laufen die
     Renderings in echten OS-Prozessen parallel auf mehreren Kernen.
+
+    ⚠️ WICHTIG: Wir benutzen explizit den 'spawn'-Multiprocessing-Kontext
+    statt des Linux-Defaults 'fork'. Hintergrund: nach einem Lauf-Ende
+    lädt firebase_admin gRPC-Native-Code in den Hauptprozess. Würden wir
+    danach forken, erben die Worker den gRPC-Thread-State → C++ Assert
+    "next_worker->state == KICKED" → Worker-Crash → Service-Stop hängt
+    bis SIGKILL nach 90s. 'spawn' startet jeden Worker als frischen
+    Python-Prozess, der nur das importiert was er braucht (WeasyPrint,
+    pypdf). Erstes Render pro Worker dauert 1-2s länger, danach
+    werden die Worker recycled → kein Performance-Verlust im Praxis-Lauf.
     """
     import concurrent.futures
+    import multiprocessing as mp
     import os
     global _pdf_pool
     if _pdf_pool is None:
@@ -775,8 +786,14 @@ def _ensure_pdf_pool():
         # zu viel Rechenleistung).
         cores = os.cpu_count() or 2
         workers = max(2, min(4, cores))
-        _pdf_pool = concurrent.futures.ProcessPoolExecutor(max_workers=workers)
-        log.info("[printer] ProcessPool initialisiert (workers=%d)", workers)
+        ctx = mp.get_context("spawn")
+        _pdf_pool = concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers, mp_context=ctx,
+        )
+        log.info(
+            "[printer] ProcessPool initialisiert (workers=%d, ctx=spawn)",
+            workers,
+        )
     return _pdf_pool
 
 
