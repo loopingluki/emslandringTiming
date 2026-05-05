@@ -35,11 +35,13 @@ _DEFAULTS: dict = {
     # Defekt-Erkennung pro Kart-Klasse: jede Klasse hat eigene Schwelle
     # und WMA-Fenstergröße. Wird nur im Transponder-Modal als
     # "Defekt-Verdacht"-Badge angezeigt (kein Live-Alert im Timing).
+    # outlier_factor: Runden über (median * factor) werden vor der WMA-
+    # Berechnung verworfen (Pit-Stop, Dreher, Crash). 1.5 = 50% über Median.
     "defect_categories": {
-        "Minikart":  {"enabled": False, "threshold_sec": 90, "window": 5},
-        "Leihkart":  {"enabled": True,  "threshold_sec": 70, "window": 5},
-        "Rennkart":  {"enabled": False, "threshold_sec": 60, "window": 5},
-        "Superkart": {"enabled": False, "threshold_sec": 60, "window": 5},
+        "Minikart":  {"enabled": False, "threshold_sec": 90, "window": 5,  "outlier_factor": 1.5},
+        "Leihkart":  {"enabled": True,  "threshold_sec": 70, "window": 30, "outlier_factor": 1.5},
+        "Rennkart":  {"enabled": False, "threshold_sec": 60, "window": 5,  "outlier_factor": 1.5},
+        "Superkart": {"enabled": False, "threshold_sec": 60, "window": 5,  "outlier_factor": 1.5},
     },
     "classes": [
         {"name": "Minikart",  "color": "#f9a800"},

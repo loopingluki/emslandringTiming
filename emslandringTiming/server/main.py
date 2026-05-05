@@ -400,14 +400,23 @@ async def api_transponders():
             return False
         window    = max(2, int(cat.get("window", 5)))
         threshold = int(cat.get("threshold_sec", 70)) * 1_000_000
+        factor    = float(cat.get("outlier_factor", 1.5))
         recent = lap_times[:window]
         if len(recent) < window:
             # Erst Defekt melden wenn das Fenster gefüllt ist (sonst False
             # Positives durch eine einzelne langsame Runde direkt am Anfang).
             return False
-        weights = list(range(len(recent), 0, -1))  # neueste = höchstes Gewicht
+        # Ausreißer-Filter: Runden über (median * factor) verwerfen
+        # (Pit, Dreher, Crash). Erst nach Filterung WMA berechnen.
+        srt = sorted(recent)
+        median = srt[len(srt) // 2]
+        cleaned = [t for t in recent if t <= median * factor]
+        if len(cleaned) < 3:
+            # zu wenig saubere Runden → kein Defekt-Urteil
+            return False
+        weights = list(range(len(cleaned), 0, -1))  # neueste = höchstes Gewicht
         total_w = sum(weights)
-        wma = sum(w * x for w, x in zip(weights, recent)) / total_w
+        wma = sum(w * x for w, x in zip(weights, cleaned)) / total_w
         return wma > threshold
 
     result = []

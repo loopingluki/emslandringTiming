@@ -1352,19 +1352,21 @@ function _showDefectCategoryFields() {
   const cls = _defectActiveClass;
   if (!cls) return;
   const cat = _defectCategoriesEdit[cls] ||
-    (_defectCategoriesEdit[cls] = { enabled: false, threshold_sec: 60, window: 5 });
+    (_defectCategoriesEdit[cls] = { enabled: false, threshold_sec: 60, window: 5, outlier_factor: 1.5 });
   document.getElementById('s-defect-cat-enabled').value   = cat.enabled ? '1' : '0';
   document.getElementById('s-defect-cat-threshold').value = cat.threshold_sec;
   document.getElementById('s-defect-cat-window').value    = cat.window;
+  document.getElementById('s-defect-cat-outlier').value   = cat.outlier_factor ?? 1.5;
 }
 
 function _captureDefectCategoryFields() {
   const cls = _defectActiveClass;
   if (!cls) return;
   _defectCategoriesEdit[cls] = {
-    enabled:       document.getElementById('s-defect-cat-enabled').value === '1',
-    threshold_sec: +document.getElementById('s-defect-cat-threshold').value || 60,
-    window:        +document.getElementById('s-defect-cat-window').value    || 5,
+    enabled:        document.getElementById('s-defect-cat-enabled').value === '1',
+    threshold_sec:  +document.getElementById('s-defect-cat-threshold').value || 60,
+    window:         +document.getElementById('s-defect-cat-window').value    || 5,
+    outlier_factor: +document.getElementById('s-defect-cat-outlier').value   || 1.5,
   };
 }
 
@@ -1657,28 +1659,45 @@ function renderLapTimes(data, kart_class) {
   const window     = Math.max(2, +cat.window || 5);
   const thresholdS = +cat.threshold_sec || 70;
   const thresholdUs = thresholdS * 1_000_000;
+  const factor     = +cat.outlier_factor || 1.5;
 
   // WMA über die in Settings konfigurierten N Runden berechnen.
   // data.lap_times ist DESC (neueste zuerst) → wir nehmen die ersten window.
   const times = (data.lap_times || []).map(l => l.lap_time_us).filter(x => x);
   const recent = times.slice(0, window);
+
+  // Ausreißer-Filter: Runden über (median * factor) verwerfen
+  // (Pit-Stops, Dreher, Crashs verfälschen sonst den WMA).
+  let cleaned = recent;
+  let outliers = 0;
+  if (recent.length >= 3) {
+    const srt = [...recent].sort((a,b)=>a-b);
+    const median = srt[Math.floor(srt.length/2)];
+    cleaned = recent.filter(t => t <= median * factor);
+    outliers = recent.length - cleaned.length;
+  }
+
   let wma = null;
-  if (recent.length > 0) {
+  if (cleaned.length >= 3) {
     // Linear gewichtet: neueste = höchstes Gewicht
-    const weights = recent.map((_, i) => recent.length - i); // [N, N-1, ..., 1]
+    const weights = cleaned.map((_, i) => cleaned.length - i); // [N, N-1, ..., 1]
     const totalW = weights.reduce((a,b) => a+b, 0);
     wma = Math.round(
-      recent.reduce((sum, x, i) => sum + weights[i] * x, 0) / totalW
+      cleaned.reduce((sum, x, i) => sum + weights[i] * x, 0) / totalW
     );
   }
 
   document.getElementById('td-laps-count').textContent = data.count;
-  document.getElementById('td-laps-wma-label').textContent = `WMA${recent.length}:`;
+  const wmaLabel = outliers > 0
+    ? `WMA${cleaned.length} (${outliers} Ausreißer):`
+    : `WMA${cleaned.length}:`;
+  document.getElementById('td-laps-wma-label').textContent = wmaLabel;
   document.getElementById('td-laps-wma').textContent = fmtTime(wma);
 
-  // Defekt-Badge: nur wenn aktiviert + WMA > Schwelle
+  // Defekt-Badge: nur wenn aktiviert + WMA > Schwelle + Fenster gefüllt
   const warn = document.getElementById('td-laps-warn');
-  warn.style.display = (enabled && wma && wma > thresholdUs) ? '' : 'none';
+  const windowFull = recent.length >= window;
+  warn.style.display = (enabled && windowFull && wma && wma > thresholdUs) ? '' : 'none';
 
   const list = document.getElementById('td-laps-list');
   if (!data.lap_times || !data.lap_times.length) {
