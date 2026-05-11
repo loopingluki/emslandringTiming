@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emslandring Dankern – Ranking</title>
+<style>
+  /* Fonts lokal - Google Fonts ist auf Pi-Kiosk nicht zuverlaessig erreichbar.
+     Dateien liegen unter /fonts/ (mount in main.py auf server/data/fonts) */
+  @font-face { font-family:'Bebas Neue'; font-style:normal; font-weight:400;
+    src:local('Bebas Neue'), url('/fonts/BebasNeue-Regular.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow Condensed'; font-style:normal; font-weight:600;
+    src:local('Barlow Condensed SemiBold'), url('/fonts/BarlowCondensed-SemiBold.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow Condensed'; font-style:normal; font-weight:700;
+    src:local('Barlow Condensed Bold'), url('/fonts/BarlowCondensed-Bold.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow'; font-style:normal; font-weight:400;
+    src:local('Barlow'), url('/fonts/Barlow-Regular.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'KonkretikaBlack'; font-style:normal; font-weight:400;
+    src:url('/fonts/KonkretikaBlackWIP.ttf') format('truetype'); font-display:swap; }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width:100%; height:100%; background:#d8d8d8; font-family:'Barlow',sans-serif; color:#111; overflow:hidden; }
+  .stage { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+           /* Aspect-Ratio frei zwischen 4:3 und 16:9. Ausserhalb: kleine Raender. */
+           width:min(100vw,177.78vh); height:min(100vh,75vw);
+           background:#f0f0f0; display:flex; flex-direction:column; }
+  /* Handy / sehr schmale Displays: Korsett aufheben, voll fuellen */
+  @media (max-width:600px) { .stage { width:100vw; height:100vh; } }
+  .topbar { display:flex; align-items:center; justify-content:space-between; padding:0 4%; height:9%; background:#c62828; flex-shrink:0; transition:background .4s ease; }
+  .stage.grandprix .topbar { background:#c62828; }
+  .stage.grandprix .brand-name::after { content:' · GRAND PRIX'; color:#ffd600; font-size:.55em; letter-spacing:.18em; margin-left:.4em; }
+
+  /* ===== Countdown in der Topbar (nur GP) ===== */
+  .topbar-center { display:none; align-items:center; gap:.8em; }
+  .stage.grandprix .topbar-center { display:flex; }
+  .topbar-center .cb-label { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700;
+    font-size:clamp(14px,1.7vw,26px); letter-spacing:.25em; text-transform:uppercase; color:#ffd600; }
+  .topbar-center .cb-value { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif;
+    font-size:clamp(36px,6vw,90px); line-height:1; letter-spacing:.04em; color:#fff; }
+  .topbar-center .cb-status { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700;
+    font-size:clamp(14px,1.7vw,26px); letter-spacing:.2em; text-transform:uppercase; color:#bbb;
+    padding:.2em .6em; border:1px solid rgba(255,255,255,.25); border-radius:3px; }
+
+  /* ===== Pre-Start Overlay (RED-Phase) ===== */
+  .prestart-overlay { display:none; position:absolute; inset:0; z-index:50;
+    background:radial-gradient(ellipse at center, #c62828 0%, #4a0a0a 100%);
+    color:#fff; flex-direction:column; align-items:center; justify-content:center; gap:3vh; }
+  .prestart-overlay.show { display:flex; }
+  .prestart-overlay .ps-title { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif;
+    font-size:clamp(60px,12vw,200px); line-height:1; letter-spacing:.03em;
+    text-shadow:0 6px 30px rgba(0,0,0,.5); }
+  .prestart-overlay .ps-sub { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700;
+    font-size:clamp(20px,3vw,44px); letter-spacing:.4em; text-transform:uppercase; color:#ffd600; }
+  .prestart-overlay .ps-lights { display:flex; gap:2vw; margin-top:2vh; }
+  .prestart-overlay .ps-light { width:clamp(40px,5vw,80px); height:clamp(40px,5vw,80px);
+    border-radius:50%; background:#c62828; border:4px solid #4a0a0a;
+    box-shadow:0 0 30px rgba(255,0,0,.7), inset 0 -6px 12px rgba(0,0,0,.3);
+    animation:psBlink 1.2s ease-in-out infinite; }
+  .prestart-overlay .ps-light:nth-child(2) { animation-delay:.15s; }
+  .prestart-overlay .ps-light:nth-child(3) { animation-delay:.3s; }
+  .prestart-overlay .ps-light:nth-child(4) { animation-delay:.45s; }
+  .prestart-overlay .ps-light:nth-child(5) { animation-delay:.6s; }
+  @keyframes psBlink { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+
+  /* ===== GO! Flash Overlay ===== */
+  .go-flash { display:none; position:absolute; inset:0; z-index:55;
+    background:radial-gradient(ellipse at center, #2e7d32, #1b5e20);
+    color:#fff; font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif;
+    font-size:clamp(100px,25vw,400px); line-height:1; letter-spacing:.06em;
+    align-items:center; justify-content:center;
+    text-shadow:0 0 60px rgba(255,255,255,.5), 0 0 120px rgba(76,175,80,.6); }
+  .go-flash.show { display:flex; animation: goAppear 1.5s ease-out forwards; }
+  @keyframes goAppear {
+    0%   { opacity:0; transform:scale(0.3); }
+    15%  { opacity:1; transform:scale(1.15); }
+    40%  { opacity:1; transform:scale(1); }
+    100% { opacity:0; transform:scale(1.05); }
+  }
+
+  /* ===== Idle Screen (rot mit Animation, erkennbar nicht eingefroren) ===== */
+  .idle-overlay { display:none; position:absolute; inset:0; z-index:30;
+    background:radial-gradient(ellipse at center, #c62828 0%, #4a0a0a 100%);
+    color:#fff; flex-direction:column; align-items:center; justify-content:center; gap:3vh; }
+  .idle-overlay.show { display:flex; }
+  .idle-brand { font-family:'Bebas Neue','Impact','Arial Narrow',sans-serif;
+    font-size:clamp(60px,11vw,200px); line-height:1; letter-spacing:.06em; text-align:center;
+    text-shadow:0 6px 30px rgba(0,0,0,.5); }
+  .idle-sub { font-family:'Barlow Condensed','Arial Narrow',sans-serif; font-weight:700;
+    font-size:clamp(18px,2.8vw,40px); letter-spacing:.4em; text-transform:uppercase;
+    color:#ffd600; }
+  .idle-lights { display:flex; gap:2vw; margin-top:1vh; }
+  .idle-light { width:clamp(40px,5vw,80px); height:clamp(40px,5vw,80px);
+    border-radius:50%; background:#ffd600; border:4px solid #4a0a0a;
+    box-shadow:0 0 30px rgba(255,214,0,.7), inset 0 -6px 12px rgba(0,0,0,.3);
+    animation:idleBlink 1.6s ease-in-out infinite; }
+  .idle-light:nth-child(2) { animation-delay:.2s; }
+  .idle-light:nth-child(3) { animation-delay:.4s; }
+  .idle-light:nth-child(4) { animation-delay:.6s; }
+  .idle-light:nth-child(5) { animation-delay:.8s; }
+  @keyframes idleBlink { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.2; transform:scale(.85); } }
+  .idle-clock { font-family:'Bebas Neue','Impact',sans-serif; font-size:clamp(28px,4.5vw,60px);
+    line-height:1; letter-spacing:.08em; color:rgba(255,255,255,.75); margin-top:2vh;
+    font-variant-numeric:tabular-nums; }
+
+  /* ===== Ergebnis in Header+Hero (nach Lauf-Ende) ===== */
+  .stage.result-mode .topbar { background:#1a1008 !important; }
+  .stage.result-mode .brand-name::after { content:' · ERGEBNIS'; color:#ffd600; font-size:.55em; letter-spacing:.18em; margin-left:.4em; }
+  .stage.grandprix.result-mode .brand-name::after { content:' · GRAND PRIX ERGEBNIS'; color:#ffd600; font-size:.45em; letter-spacing:.15em; margin-left:.4em; }
+  .stage.result-mode .hero-section { background:#0d0d0d; border-bottom:2px solid #333; }
+  .stage.result-mode .hero-section::before { display:none; }
+  .stage.result-mode .hero-row { display:none; }
+  .result-podium { display:none; width:100%; height:100%; flex-direction:row; align-items:flex-end; padding:0 6%; gap:2%; }
+  .stage.result-mode .result-podium { display:flex; animation:rpFadeIn .6s ease; }
+  @keyframes rpFadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+  .rp-place { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
+  .rp-rank { font-family:'Bebas Neue','Impact',sans-serif; font-size:clamp(16px,2.5vw,38px);
+    line-height:1; color:rgba(255,255,255,.4); letter-spacing:.1em; margin-bottom:.15em; }
+  .rp-kart { font-family:'Bebas Neue','Impact',sans-serif; font-size:clamp(44px,8.5vw,140px);
+    line-height:1; letter-spacing:.04em; margin-bottom:.1em; white-space:nowrap; }
+  .rp-p1 .rp-kart { color:#ffd600; text-shadow:0 0 30px rgba(255,214,0,.5); }
+  .rp-p2 .rp-kart { color:#d0d0d0; }
+  .rp-p3 .rp-kart { color:#cd7f32; }
+  .rp-step { width:100%; border-radius:6px 6px 0 0; }
+  .rp-step-1 { height:clamp(28px,7vh,100px); background:linear-gradient(180deg,#ffd600,#c6a700);
+    box-shadow:0 0 20px rgba(255,214,0,.3); animation:rpSlide .5s ease-out .1s both; }
+  .rp-step-2 { height:clamp(20px,5vh,72px); background:linear-gradient(180deg,#d0d0d0,#8a8a8a);
+    animation:rpSlide .5s ease-out .25s both; }
+  .rp-step-3 { height:clamp(14px,3.5vh,52px); background:linear-gradient(180deg,#d4883e,#9a5e1f);
+    animation:rpSlide .5s ease-out .4s both; }
+  @keyframes rpSlide { from { transform:scaleY(0); transform-origin:bottom; } to { transform:scaleY(1); } }
+
+  /* ===== GP-Tabellen-Spalten ===== */
+  .stage.grandprix .col-head,
+  .stage.grandprix .row { grid-template-columns:9% 30% 13% 1fr 1fr; }
+  .stage.grandprix .col-head .h-train,
+  .stage.grandprix .row .c-train { display:none; }
+  .col-head .h-gp, .row .c-gp { display:none; }
+  .stage.grandprix .col-head .h-gp,
+  .stage.grandprix .row .c-gp { display:block; }
+  .stage.grandprix .laps-val { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif;
+    font-size:var(--fs-time,2.4vw); line-height:1; color:#111; text-align:left; }
+  .stage.grandprix .row.p1 .laps-val { color:#c62828; }
+  .stage.grandprix .gap-val { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif;
+    font-size:var(--fs-time,2.4vw); line-height:1; text-align:right; color:#666; letter-spacing:.05em; }
+  .stage.grandprix .row.p1 .gap-val { color:#111; }
+  .brand-name { font-family:'KonkretikaBlack','Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:clamp(26px,4.8vw,74px); letter-spacing:.06em; color:#fff; line-height:1; font-style:italic; }
+  .live-badge { display:flex; align-items:center; gap:.6em; font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700; font-size:clamp(16px,2.4vw,34px); letter-spacing:.2em; color:#bbb; text-transform:uppercase; }
+  .live-dot { width:clamp(8px,1.1vw,14px); height:clamp(8px,1.1vw,14px); border-radius:50%; background:#e63329; animation:blink 1.4s ease-in-out infinite; flex-shrink:0; }
+  .live-dot.off { background:#555; animation:none; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+
+  .hero-section { flex-shrink:0; height:25%; padding:0 4%; display:flex; flex-direction:column; justify-content:center; background:#fff; border-bottom:2px solid #e0e0e0; position:relative; transition:background .2s ease; }
+  .hero-section.flash-yellow { background:#ffd600; transition:background 0s; }
+  .hero-section.flash-blue   { background:#1565c0; transition:background 0s; }
+  .hero-section.flash-red    { background:#c62828; transition:background 0s; }
+  .hero-section.flash-silver { background:#9e9e9e; transition:background 0s; }
+  .hero-section.flash-black  { background:#212121; transition:background 0s; }
+  .hero-section.flash-fade   { background:#fff; transition:background .8s ease; }
+  .hero-section::before { content:''; position:absolute; left:0; top:10%; bottom:10%; width:5px; background:var(--hero-accent,#e63329); transition:background .3s; }
+
+  .hero-eyebrow { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:600; font-size:clamp(16px,2vw,30px); letter-spacing:.4em; text-transform:uppercase; color:#999; margin-bottom:.4em; transition:color .2s; }
+  .hero-section.flash-yellow .hero-eyebrow, .hero-section.flash-silver .hero-eyebrow { color:rgba(0,0,0,.4); }
+  .hero-section.flash-blue .hero-eyebrow, .hero-section.flash-red .hero-eyebrow, .hero-section.flash-black .hero-eyebrow { color:rgba(255,255,255,.55); }
+
+  .hero-row { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:5%; }
+  .hero-pos { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:clamp(90px,14vw,240px); line-height:1; color:var(--hero-accent,#e63329); transition:color .2s; }
+  .hero-section.flash-yellow .hero-pos, .hero-section.flash-silver .hero-pos { color:rgba(0,0,0,.55); }
+  .hero-section.flash-blue .hero-pos, .hero-section.flash-red .hero-pos, .hero-section.flash-black .hero-pos { color:rgba(255,255,255,.85); }
+
+  .hero-kart-block { display:flex; flex-direction:column; gap:.05em; }
+  .hero-kart-label { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:600; font-size:clamp(18px,2.2vw,34px); letter-spacing:.25em; text-transform:uppercase; color:#999; line-height:1; transition:color .2s; }
+  .hero-section.flash-yellow .hero-kart-label, .hero-section.flash-silver .hero-kart-label { color:rgba(0,0,0,.4); }
+  .hero-section.flash-blue .hero-kart-label, .hero-section.flash-red .hero-kart-label, .hero-section.flash-black .hero-kart-label { color:rgba(255,255,255,.6); }
+  .hero-kart-num { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:clamp(70px,11vw,180px); color:#111; line-height:1; letter-spacing:.04em; transition:color .2s; }
+  .hero-section.flash-blue .hero-kart-num, .hero-section.flash-red .hero-kart-num, .hero-section.flash-black .hero-kart-num { color:#fff; }
+
+  .hero-time-block { text-align:right; display:flex; flex-direction:column; gap:.05em; align-items:flex-end; }
+  .hero-time-label { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:600; font-size:clamp(18px,2.2vw,34px); letter-spacing:.25em; text-transform:uppercase; color:#999; line-height:1; transition:color .2s; }
+  .hero-section.flash-yellow .hero-time-label, .hero-section.flash-silver .hero-time-label { color:rgba(0,0,0,.4); }
+  .hero-section.flash-blue .hero-time-label, .hero-section.flash-red .hero-time-label, .hero-section.flash-black .hero-time-label { color:rgba(255,255,255,.6); }
+  .hero-time-val { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:clamp(70px,11vw,180px); color:#111; line-height:1; letter-spacing:.06em; transition:color .2s; }
+  .hero-section.flash-blue .hero-time-val, .hero-section.flash-red .hero-time-val, .hero-section.flash-black .hero-time-val { color:#fff; }
+
+  .table-section { flex:1; min-height:0; display:flex; flex-direction:column; background:#f0f0f0; }
+  .col-head { display:grid; grid-template-columns:9% 38% 1fr 1fr; padding:1.4% 4% .8%; border-bottom:3px solid #bbb; flex-shrink:0; }
+  .col-head span { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700; font-size:clamp(16px,2.2vw,34px); letter-spacing:.22em; text-transform:uppercase; color:#666; }
+  .col-head span:nth-child(3), .col-head span:nth-child(4) { text-align:right; }
+
+  .rows-viewport { flex:1; min-height:0; overflow:hidden; position:relative; }
+  .rows { display:flex; flex-direction:column; transition:transform .6s ease-in-out; }
+  .row { display:grid; grid-template-columns:9% 38% 1fr 1fr; align-items:center; flex-shrink:0; border-bottom:1px solid #d8d8d8; position:relative; height:var(--row-h,10%); transition:background .5s ease; padding:0 4%; }
+  .row::before { content:''; position:absolute; left:1%; top:15%; bottom:15%; width:3px; background:#e63329; opacity:0; }
+  .row.p1::before { opacity:1; }
+  .row.p1 { background:rgba(230,51,41,0.04); }
+  .row.row-flash { transition:background 0s !important; }
+  .row.row-flash-fade { transition:background 1s ease !important; }
+
+  .pos { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:var(--fs-pos,2.6vw); color:#bbb; line-height:1; }
+  .row.p1 .pos { color:#e63329; }
+  .row.p2 .pos { color:#888; }
+  .row.p3 .pos { color:#aaa; }
+  .kart { font-family:'Barlow Condensed','Arial Narrow','Liberation Sans Narrow',sans-serif; font-weight:700; font-size:var(--fs-kart,2.3vw); color:#333; line-height:1; letter-spacing:.02em; }
+  .row.p1 .kart { color:#111; }
+  .best-time { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:var(--fs-time,2.4vw); text-align:right; line-height:1; letter-spacing:.05em; color:#333; }
+  .row.p1 .best-time { color:#e63329; }
+  .last-time { font-family:'Bebas Neue','Impact','Arial Narrow','Helvetica Neue Condensed',sans-serif; font-size:var(--fs-time,2.4vw); text-align:right; line-height:1; letter-spacing:.05em; color:#aaa; }
+
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+
+  <!-- Idle Screen (zwischen Läufen) -->
+  <div class="idle-overlay" id="idle">
+    <div class="idle-brand">Emslandring<br>Dankern</div>
+    <div class="idle-sub">Bereit für den nächsten Lauf</div>
+    <div class="idle-lights">
+      <div class="idle-light"></div><div class="idle-light"></div>
+      <div class="idle-light"></div><div class="idle-light"></div>
+      <div class="idle-light"></div>
+    </div>
+    <div class="idle-clock" id="idleClock">--:--:--</div>
+  </div>
+
+  <!-- Pre-Start (Grand Prix RED Phase) -->
+  <div class="prestart-overlay" id="prestart">
+    <div class="ps-sub">Grand Prix · Pre-Start</div>
+    <div class="ps-title">BEREIT MACHEN</div>
+    <div class="ps-lights">
+      <div class="ps-light"></div><div class="ps-light"></div>
+      <div class="ps-light"></div><div class="ps-light"></div>
+      <div class="ps-light"></div>
+    </div>
+  </div>
+
+  <!-- GO! Flash (Grand Prix Start) -->
+  <div class="go-flash" id="goFlash">GO!</div>
+
+  <div class="topbar">
+    <div class="brand-name">emslandring dankern</div>
+    <div class="topbar-center">
+      <span class="cb-value" id="cbValue">--:--</span>
+      <span class="cb-status" id="cbStatus" style="display:none;">—</span>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div><span id="liveLabel">Live</span>
+    </div>
+  </div>
+
+  <div class="hero-section" id="heroSection">
+    <div class="hero-row">
+      <div class="hero-pos" id="heroPos">--</div>
+      <div class="hero-kart-block">
+        <div class="hero-kart-label">Kart</div>
+        <div class="hero-kart-num" id="heroKart">--</div>
+      </div>
+      <div class="hero-time-block">
+        <div class="hero-time-label">Letzte Runde</div>
+        <div class="hero-time-val" id="heroTime">-:--.---</div>
+      </div>
+    </div>
+    <div class="result-podium" id="resultPodium">
+      <div class="rp-place rp-p2">
+        <div class="rp-rank">2</div>
+        <div class="rp-kart" id="rpKart2">--</div>
+        <div class="rp-step rp-step-2"></div>
+      </div>
+      <div class="rp-place rp-p1">
+        <div class="rp-rank">1</div>
+        <div class="rp-kart" id="rpKart1">--</div>
+        <div class="rp-step rp-step-1"></div>
+      </div>
+      <div class="rp-place rp-p3">
+        <div class="rp-rank">3</div>
+        <div class="rp-kart" id="rpKart3">--</div>
+        <div class="rp-step rp-step-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-section">
+    <div class="col-head">
+      <span>Platz</span>
+      <span>Kart</span>
+      <span class="h-gp">Runden</span>
+      <span style="text-align:right">Bestzeit</span>
+      <span class="h-train" style="text-align:right">Letzte Runde</span>
+      <span class="h-gp" style="text-align:right">Abstand</span>
+    </div>
+    <div class="rows-viewport" id="rowsViewport">
+      <div class="rows" id="rows"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── State ──
+  let currentMode = 'training';   // 'training' | 'grandprix'
+  let currentStatus = '';         // '' | 'RED' | 'GREEN' | 'FINISH'
+  let sessionConfirmed = false;   // true wenn Lauf armed/running/paused/finishing
+  const karts = {};        // id -> { best, last, name, laps, total }
+  const MAX_VISIBLE   = 10;
+  const MIN_VISIBLE   = 4;
+  const ROW_FLASH_MS  = 5000;
+  const ROW_FADE_MS   = 1000;
+  const HERO_FLASH_MS = 1200;
+  const SCROLL_ROW_MS   = 1800;   // Zeit pro Zeile beim Weiterscrollen
+  const SCROLL_PAUSE_TOP = 4500;  // laengere Pause wenn wir oben angekommen sind
+
+  const flashTimers = {};   // id -> [t1,t2]
+  const flashInfo   = {};   // id -> { color, until, fadeUntil }
+  let scrollOffset = 0;
+  let scrollTimer  = null;
+
+  function kartCategory(id) {
+    const n = parseInt(id, 10);
+    if (n >= 1  && n <= 9)  return { cls:'flash-yellow', row:'rgba(255,214,0,0.22)',   accent:'#f9a800' };
+    if (n >= 10 && n <= 29) return { cls:'flash-blue',   row:'rgba(21,101,192,0.15)',  accent:'#1565c0' };
+    if (n >= 30 && n <= 49) return { cls:'flash-red',    row:'rgba(198,40,40,0.14)',   accent:'#c62828' };
+    if (n >= 50 && n <= 55) return { cls:'flash-silver', row:'rgba(158,158,158,0.25)', accent:'#757575' };
+    if (n >= 56 && n <= 60) return { cls:'flash-black',  row:'rgba(33,33,33,0.18)',    accent:'#111'    };
+    return { cls:'flash-blue', row:'rgba(21,101,192,0.15)', accent:'#1565c0' };
+  }
+
+  // µs -> Sekunden  (null bleibt null)
+  function usToSec(us) {
+    if (us == null) return null;
+    return us / 1_000_000;
+  }
+  function fmt(s) {
+    if (s == null) return '-:--.---';
+    const m = Math.floor(s/60);
+    const sec = (s%60).toFixed(3).padStart(6,'0');
+    return `${m}:${sec}`;   // 0 -> "0:00.000"
+  }
+  // Sekunden -> "M:SS" oder "H:MM:SS"  (für Countdown)
+  function fmtCountdown(sec) {
+    if (sec == null || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    const h = Math.floor(sec/3600);
+    const m = Math.floor((sec%3600)/60);
+    const s = sec%60;
+    const pad = n => String(n).padStart(2,'0');
+    if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+    return `${m}:${pad(s)}`;
+  }
+
+  // Sortierung:
+  // - Training: nach Bestzeit aufsteigend
+  // - Grand Prix: nach Runden absteigend, bei Gleichstand nach Gesamtzeit aufsteigend
+  function getSorted() {
+    const ids = Object.keys(karts);
+    if (currentMode === 'grandprix') {
+      return ids.sort((a,b) => {
+        const A = karts[a], B = karts[b];
+        const la = A.laps||0, lb = B.laps||0;
+        if (la !== lb) return lb - la;
+        const ta = A.total==null ? Infinity : A.total;
+        const tb = B.total==null ? Infinity : B.total;
+        if (ta !== tb) return ta - tb;
+        return parseInt(a,10)-parseInt(b,10);
+      });
+    }
+    return ids.sort((a,b) => {
+      const A = karts[a].best, B = karts[b].best;
+      if (A == null && B == null) return parseInt(a,10)-parseInt(b,10);
+      if (A == null) return 1;
+      if (B == null) return -1;
+      return A - B;
+    });
+  }
+
+  // Abstand zum Führenden (Grand Prix). Führender erhält "—".
+  function gapToLeader(id, sorted) {
+    if (!sorted || !sorted.length) return '—';
+    const leader = karts[sorted[0]];
+    const me = karts[id];
+    if (!leader || !me) return '—';
+    if (id === sorted[0]) return '—';
+    const lapDiff = (leader.laps||0) - (me.laps||0);
+    if (lapDiff > 0) return `+${lapDiff} Rd`;
+    if (leader.total == null || me.total == null) return '—';
+    const d = me.total - leader.total;
+    if (d <= 0) return '—';
+    return '+' + d.toFixed(3) + 's';
+  }
+  function getRank(id) { return getSorted().indexOf(String(id)) + 1; }
+
+  // Aktuelle Anzahl sichtbarer Zeilen: bis 10 Karts alle anzeigen, dann scrollen
+  function visibleCount() {
+    const total = getSorted().length;
+    return Math.max(MIN_VISIBLE, Math.min(MAX_VISIBLE, total || MIN_VISIBLE));
+  }
+
+  function applyLayout() {
+    const viewport = document.getElementById('rowsViewport');
+    const vh = viewport.clientHeight;
+    const vc = visibleCount();
+    const rowH = Math.floor(vh / vc);
+    const rows = document.getElementById('rows');
+    const scale = Math.min(2.8, rowH / 70);
+    const fs = base => `${Math.max(16, Math.round(base*scale))}px`;
+    rows.style.setProperty('--fs-pos',  fs(54));
+    rows.style.setProperty('--fs-kart', fs(46));
+    rows.style.setProperty('--fs-time', fs(48));
+    document.querySelectorAll('.row').forEach(r => { r.style.height = rowH+'px'; });
+    updateScroll(true);
+  }
+
+  function buildRows() {
+    const list = document.getElementById('rows');
+    list.innerHTML = '';
+    const sorted = getSorted();
+    const viewport = document.getElementById('rowsViewport');
+    const vc = visibleCount();
+    const rowH = Math.floor(viewport.clientHeight / vc);
+
+    sorted.forEach((id, i) => {
+      const podium = ['p1','p2','p3'][i] || '';
+      const div = document.createElement('div');
+      div.className = `row ${podium}`;
+      div.id = `row-${id}`;
+      div.style.height = rowH+'px';
+      const gap = gapToLeader(id, sorted);
+      div.innerHTML = `
+        <div class="pos">${String(i+1).padStart(2,'0')}</div>
+        <div class="kart">${displayName(id)}</div>
+        <div class="c-gp laps-val">${karts[id].laps||0}</div>
+        <div class="best-time">${fmt(karts[id].best)}</div>
+        <div class="c-train last-time" id="last-${id}">${fmt(karts[id].last)}</div>
+        <div class="c-gp gap-val">${gap}</div>
+      `;
+      list.appendChild(div);
+      applyRowFlash(id);
+    });
+    applyLayout();
+    updateScroll(true);
+    startScrollCycle();
+  }
+
+  function updateScroll(instant) {
+    const viewport = document.getElementById('rowsViewport');
+    const vc = visibleCount();
+    const rowH = Math.floor(viewport.clientHeight / vc);
+    const rows = document.getElementById('rows');
+    const ty = -(scrollOffset * rowH);
+    rows.style.transition = instant ? 'none' : 'transform .6s ease-in-out';
+    rows.style.transform = `translateY(${ty}px)`;
+  }
+
+  function startScrollCycle() {
+    if (scrollTimer) clearTimeout(scrollTimer);
+    const total = getSorted().length;
+    const maxOffset = total - MAX_VISIBLE;
+    if (maxOffset <= 0) { scrollOffset = 0; updateScroll(true); return; }
+    if (scrollOffset > maxOffset) scrollOffset = 0;
+    function step() {
+      const curMax = getSorted().length - MAX_VISIBLE;
+      if (curMax <= 0) { scrollOffset = 0; updateScroll(true); return; }
+      scrollOffset += 1;
+      if (scrollOffset > curMax) scrollOffset = 0;
+      updateScroll(false);
+      scrollTimer = setTimeout(step, scrollOffset === 0 ? SCROLL_PAUSE_TOP : SCROLL_ROW_MS);
+    }
+    scrollTimer = setTimeout(step, SCROLL_PAUSE_TOP);
+  }
+
+  function applyRowFlash(id) {
+    const row = document.getElementById('row-' + id);
+    if (!row) return;
+    const info = flashInfo[id];
+    row.classList.remove('row-flash','row-flash-fade');
+    if (!info) {
+      row.style.background = row.classList.contains('p1') ? 'rgba(230,51,41,0.04)' : '';
+      return;
+    }
+    const now = Date.now();
+    if (now < info.until) {
+      void row.offsetWidth;
+      row.classList.add('row-flash');
+      row.style.background = info.color;
+    } else if (now < info.fadeUntil) {
+      void row.offsetWidth;
+      row.classList.add('row-flash-fade');
+      row.style.background = row.classList.contains('p1') ? 'rgba(230,51,41,0.04)' : '';
+    } else {
+      row.style.background = row.classList.contains('p1') ? 'rgba(230,51,41,0.04)' : '';
+    }
+  }
+
+  function flashRow(id) {
+    const cat = kartCategory(id);
+    const now = Date.now();
+    flashInfo[id] = {
+      color: cat.row,
+      until: now + ROW_FLASH_MS,
+      fadeUntil: now + ROW_FLASH_MS + ROW_FADE_MS,
+    };
+    if (flashTimers[id]) flashTimers[id].forEach(clearTimeout);
+    const t1 = setTimeout(() => applyRowFlash(id), ROW_FLASH_MS);
+    const t2 = setTimeout(() => { delete flashInfo[id]; applyRowFlash(id); }, ROW_FLASH_MS + ROW_FADE_MS);
+    flashTimers[id] = [t1, t2];
+    applyRowFlash(id);
+  }
+
+  let heroFlashTimer = null;
+  function flashHeroSection(id) {
+    const hero = document.getElementById('heroSection');
+    const cat  = kartCategory(id);
+    if (heroFlashTimer) clearTimeout(heroFlashTimer);
+    hero.classList.remove('flash-yellow','flash-blue','flash-red','flash-silver','flash-black','flash-fade');
+    void hero.offsetWidth;
+    hero.classList.add(cat.cls);
+    hero.style.setProperty('--hero-accent', cat.accent);
+    heroFlashTimer = setTimeout(() => {
+      hero.classList.remove(cat.cls);
+      hero.classList.add('flash-fade');
+      setTimeout(() => hero.classList.remove('flash-fade'), 900);
+    }, HERO_FLASH_MS);
+  }
+
+  function updateHero(id) {
+    document.getElementById('heroPos').textContent  = String(getRank(id)).padStart(2,'0');
+    document.getElementById('heroKart').textContent = String(id).padStart(2,'0');
+    document.getElementById('heroTime').textContent = fmt(karts[id].last);
+    flashHeroSection(id);
+  }
+
+  // ── Mode / Pre-Start / Countdown ──
+  function setMode(mode) {
+    // backend mode: 'training' | 'gp_time' | 'gp_laps'
+    const m = (mode === 'gp_time' || mode === 'gp_laps') ? 'grandprix' : 'training';
+    if (m === currentMode) return;
+    currentMode = m;
+    document.getElementById('stage').classList.toggle('grandprix', m === 'grandprix');
+    buildRows();
+  }
+  function updatePrestart() {
+    const ov = document.getElementById('prestart');
+    const show = sessionConfirmed && (currentMode === 'grandprix') && (currentStatus === 'RED');
+    ov.classList.toggle('show', show);
+  }
+  function updateCountdown(remainingSec, status) {
+    const v = document.getElementById('cbValue');
+    const s = document.getElementById('cbStatus');
+    if (remainingSec != null) v.textContent = fmtCountdown(remainingSec);
+    if (status != null) {
+      const st = status.trim();
+      s.textContent = st || '—';
+      s.style.color =
+        st === 'GREEN' ? '#4caf50' :
+        st === 'RED'   ? '#ffd600' :
+        st === 'FINISH'? '#ffd600' : '#bbb';
+    }
+  }
+
+  // Engine-Status → Dashboard-Status (RED/GREEN/FINISH)
+  function statusFromEngine(engineStatus, mode) {
+    const isGP = mode === 'gp_time' || mode === 'gp_laps';
+    if (engineStatus === 'armed' && isGP)  return 'RED';
+    if (engineStatus === 'running')        return 'GREEN';
+    if (engineStatus === 'finishing')      return 'FINISH';
+    if (engineStatus === 'paused')         return 'GREEN';
+    return '';
+  }
+
+  // ── Overlay-Steuerung ──
+  function showGoFlash() {
+    const el = document.getElementById('goFlash');
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1600);
+  }
+
+  function showPodium() {
+    const sorted = getSorted();
+    if (sorted.length === 0) return;
+    for (let i = 0; i < 3; i++) {
+      const el = document.getElementById('rpKart' + (i+1));
+      if (!el) continue;
+      if (sorted[i]) {
+        const k = karts[sorted[i]];
+        const name = (k && k.name && k.name !== ('Kart ' + sorted[i])) ? k.name : ('Kart ' + String(sorted[i]).padStart(2,'0'));
+        el.textContent = name;
+      } else {
+        el.textContent = '--';
+      }
+    }
+    document.getElementById('stage').classList.add('result-mode');
+    hideIdle();
+  }
+
+  function hidePodium() {
+    document.getElementById('stage').classList.remove('result-mode');
+  }
+
+  function showIdle() {
+    document.getElementById('idle').classList.add('show');
+  }
+
+  function hideIdle() {
+    document.getElementById('idle').classList.remove('show');
+  }
+
+  // Live-Uhr im Idle-Screen
+  setInterval(() => {
+    const el = document.getElementById('idleClock');
+    if (!el) return;
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }, 1000);
+
+  // ── State-Hilfen ──
+  function ensureKart(id) {
+    if (!karts[id]) karts[id] = { best:null, last:null, name:null, laps:0, total:null };
+    return karts[id];
+  }
+  function displayName(id) {
+    const k = karts[id];
+    if (k && k.name && k.name !== ('Kart ' + id)) return k.name;
+    return 'Kart ' + String(id).padStart(2,'0');
+  }
+  function clearKarts() {
+    for (const id in karts) delete karts[id];
+  }
+
+  // Karts-Array vom neuen WS-Format ins interne Modell übernehmen
+  function ingestKartArray(arr) {
+    if (!Array.isArray(arr)) return;
+    for (const k of arr) {
+      const id = String(k.kart_nr);
+      const e = ensureKart(id);
+      e.best  = usToSec(k.best_us);
+      e.last  = usToSec(k.last_us);
+      e.laps  = k.laps || 0;
+      e.total = usToSec(k.total_us);
+      if (k.name) e.name = k.name;
+    }
+  }
+
+  // ── WebSocket Handlers ──
+  function applySnapshot(msg) {
+    clearKarts();
+    const run = msg.run || null;
+    if (run) {
+      setMode(run.mode || 'training');
+      const active = run.status && !['none','done'].includes(run.status);
+      sessionConfirmed = !!active;
+      currentStatus = statusFromEngine(run.status, run.mode);
+      if (active) {
+        hidePodium();
+        hideIdle();
+      } else {
+        showIdle();
+      }
+      // Countdown initialisieren falls verfügbar
+      if (typeof run.remaining_sec === 'number') {
+        updateCountdown(run.remaining_sec, currentStatus);
+      }
+    } else {
+      sessionConfirmed = false;
+      currentStatus = '';
+      showIdle();
+    }
+    ingestKartArray(msg.karts);
+    updatePrestart();
+    buildRows();
+  }
+
+  function handleRunState(msg) {
+    if (msg.status === 'none') {
+      // Engine zurückgesetzt → Idle, aber NICHT die Karts wegwerfen
+      // (sonst springt das Dashboard zwischen Läufen leer).
+      sessionConfirmed = false;
+      currentStatus = '';
+      updatePrestart();
+      // Nur Idle anzeigen wenn auch kein Podium aktiv ist
+      if (!document.getElementById('stage').classList.contains('result-mode')) {
+        showIdle();
+      }
+      return;
+    }
+
+    const prevStatus = currentStatus;
+    setMode(msg.mode || 'training');
+    currentStatus = statusFromEngine(msg.status, msg.mode);
+    const active = ['armed','running','paused','finishing'].includes(msg.status);
+
+    if (active) {
+      // Neuer Lauf scharf/gestartet → Idle weg, Karts leeren bei Übergang von "nicht aktiv" zu armed
+      if (!sessionConfirmed) {
+        clearKarts();
+        hidePodium();
+      }
+      sessionConfirmed = true;
+      hideIdle();
+    } else if (msg.status === 'done') {
+      // Lauf zu Ende → Podium
+      showPodium();
+      sessionConfirmed = false;
+    }
+
+    updatePrestart();
+
+    // GO! Flash: RED → GREEN im Grand Prix
+    if (currentMode === 'grandprix' && prevStatus === 'RED' && currentStatus === 'GREEN') {
+      showGoFlash();
+    }
+
+    // Countdown-Anzeige
+    updateCountdown(msg.remaining_sec, currentStatus);
+    if (msg.status === 'armed' || msg.status === 'done' || msg.status === 'none') {
+      // Wenn nicht running: Rebuild fürs neue Mode-Layout
+      buildRows();
+    }
+  }
+
+  function handleTimerTick(msg) {
+    updateCountdown(msg.remaining_sec, currentStatus);
+  }
+
+  function handlePassing(msg) {
+    hideIdle();
+    hidePodium();
+    sessionConfirmed = true;
+    const id = String(msg.kart_nr);
+    const k = ensureKart(id);
+    if (msg.name) k.name = msg.name;
+    const lap = usToSec(msg.lap_time_us);
+    if (lap != null) k.last = lap;
+    if (msg.lap_nr != null) k.laps = +msg.lap_nr || 0;
+    // best wird in kart_table dann ohnehin überschrieben; aber hier
+    // schon mal anziehen damit die Tabelle sofort stimmt
+    if (lap != null && (k.best == null || lap < k.best)) k.best = lap;
+
+    const cell = document.getElementById('last-'+id);
+    if (!cell || currentMode === 'grandprix') buildRows();
+    else cell.textContent = fmt(lap);
+    updateHero(id);
+    flashRow(id);
+  }
+
+  function handleKartTable(msg) {
+    // Authoritative: ersetzt Karts mit den vom Server sortierten/berechneten Werten
+    if (!msg.karts) return;
+    // total + laps + best aktualisieren, aber Namen nicht überschreiben falls leer
+    for (const k of msg.karts) {
+      const id = String(k.kart_nr);
+      const e = ensureKart(id);
+      e.best  = usToSec(k.best_us);
+      e.last  = usToSec(k.last_us);
+      e.laps  = k.laps || 0;
+      e.total = usToSec(k.total_us);
+      if (k.name) e.name = k.name;
+    }
+    buildRows();
+  }
+
+  function handleRunFinished(_msg) {
+    showPodium();
+    sessionConfirmed = false;
+    currentStatus = '';
+    updatePrestart();
+  }
+
+  function setLive(connected) {
+    const dot = document.getElementById('liveDot');
+    const lbl = document.getElementById('liveLabel');
+    if (connected) { dot.classList.remove('off'); lbl.textContent = 'Live'; }
+    else { dot.classList.add('off'); lbl.textContent = 'Offline'; }
+  }
+
+  // ── WebSocket mit Auto-Reconnect, Watchdog und visibilitychange ──
+  let ws = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 1000;
+  const RECONNECT_MAX = 10000;
+  const WATCHDOG_TIMEOUT = 45000;
+  let lastActivity = Date.now();
+  let connecting = false;
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    setLive(false);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(RECONNECT_MAX, reconnectDelay * 2);
+  }
+
+  function connect() {
+    if (connecting) return;
+    connecting = true;
+    try { if (ws) ws.close(); } catch(e){}
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    // Gleicher Port wie HTTP – FastAPI WebSocket auf /ws
+    const url = `${proto}://${location.host}/ws?client=dashboard`;
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      connecting = false;
+      scheduleReconnect();
+      return;
+    }
+    ws.onopen = () => {
+      connecting = false;
+      reconnectDelay = 1000;
+      lastActivity = Date.now();
+      setLive(true);
+    };
+    ws.onclose = () => {
+      connecting = false;
+      setLive(false);
+      scheduleReconnect();
+    };
+    ws.onerror = () => {
+      try { ws.close(); } catch(e){}
+    };
+    ws.onmessage = (e) => {
+      lastActivity = Date.now();
+      let msg; try { msg = JSON.parse(e.data); } catch { return; }
+      switch (msg.type) {
+        case 'snapshot':      applySnapshot(msg);     break;
+        case 'run_state':     handleRunState(msg);    break;
+        case 'timer_tick':    handleTimerTick(msg);   break;
+        case 'passing':       handlePassing(msg);     break;
+        case 'kart_table':    handleKartTable(msg);   break;
+        case 'run_finished':  handleRunFinished(msg); break;
+        // run_list, decoder_health, client_count, ping, print_*, run_updated,
+        // defect_alert, debug_decoder → für Dashboard nicht relevant
+      }
+    };
+  }
+
+  // Watchdog
+  setInterval(() => {
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      scheduleReconnect();
+      return;
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      if (Date.now() - lastActivity > WATCHDOG_TIMEOUT) {
+        try { ws.close(); } catch(e){}
+      }
+    }
+  }, 10000);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      reconnectDelay = 1000;
+      connect();
+    } else {
+      if (Date.now() - lastActivity > 30000) {
+        try { ws.close(); } catch(e){}
+      }
+    }
+  });
+
+  window.addEventListener('online',  () => {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectDelay = 1000;
+    connect();
+  });
+  window.addEventListener('offline', () => setLive(false));
+
+  buildRows();
+  showIdle();
+  window.addEventListener('resize', applyLayout);
+  connect();
+
+  // Safety-Net gegen Chromium Memory-Leak / "Error code 9" auf 1GB Pi:
+  // Nach 2h pruefen wir jede Minute ob das Rennen pausiert (sessionConfirmed=false
+  // UND kein Podium aktiv) und reloaden dann hart.
+  const RELOAD_AFTER_MS = 2 * 60 * 60 * 1000;
+  setTimeout(() => {
+    setInterval(() => {
+      const podiumActive = document.getElementById('stage').classList.contains('result-mode');
+      if (!sessionConfirmed && !podiumActive) {
+        location.reload();
+      }
+    }, 60 * 1000);
+  }, RELOAD_AFTER_MS);
+</script>
+</body>
+</html>

@@ -178,6 +178,12 @@ async def index():
     return FileResponse(WEB_TEMPLATES / "index.html")
 
 
+@app.get("/dashboard")
+async def dashboard():
+    """Read-Only Zuschauer-Dashboard (für Raspberry Pi Kiosk)."""
+    return FileResponse(WEB_TEMPLATES / "dashboard.html")
+
+
 # ── Runs API ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/runs")
