@@ -405,15 +405,22 @@ def _chart_svg(laps: list[int], W: float, H: float) -> str:
 
 
 # ── Seiten-Renderer ──────────────────────────────────────────────────────
-def _header_elements(kart: dict, ranked: list, lo: dict) -> str:
-    """Kart-Nummer, Platzierung, Klasse, Logo — gemeinsam für beide Seiten."""
+def _header_elements(kart: dict, ranked: list, lo: dict, mode: str = "training") -> str:
+    """Kart-Nummer, Platzierung, Klasse (oder "GRAND PRIX"), Logo —
+    gemeinsam für beide Seiten."""
     parts = []
     # Kart-Nummer (GeomGraphic Bold Italic)
     parts.append(e(lo["kart_num_x"], lo["kart_num_y"],
                    str(kart["kart_nr"]),
                    pt=lo["kart_num_pt"], w=700, italic=True, font="GeomGraphic"))
-    # Kart-Klasse
-    if kart.get("class"):
+    # Kart-Klasse ODER "GRAND PRIX" Label (für GP-Modi)
+    is_gp = mode in ("gp_time", "gp_laps")
+    if is_gp:
+        parts.append(e(lo["kart_class_x"], lo["kart_class_y"],
+                       "GRAND PRIX",
+                       pt=lo["kart_class_pt"], w=800, italic=True,
+                       ls="0.12em", font="Lato"))
+    elif kart.get("class"):
         parts.append(e(lo["kart_class_x"], lo["kart_class_y"],
                        kart["class"].upper(),
                        pt=lo["kart_class_pt"], w=800, italic=True,
@@ -575,6 +582,142 @@ def _matrix_element(ranked: list, lap_from: int, lap_to: int, lo: dict) -> str:
     return "".join(parts)
 
 
+def _fmt_gap(delta_us: int | None, lap_diff: int | None) -> str:
+    """Abstand zum Führenden formatieren.
+    delta_us=0 → "—" (Führender)
+    delta_us=N → "+12.345"
+    delta_us=None + lap_diff>0 → "+N Rd"
+    """
+    if delta_us == 0:
+        return "—"
+    if delta_us is not None:
+        ms = delta_us // 1000
+        s, ms = divmod(ms, 1000)
+        m, s = divmod(s, 60)
+        if m > 0:
+            return f"+{m}:{s:02d}.{ms:03d}"
+        return f"+{s}.{ms:03d}"
+    if lap_diff and lap_diff > 0:
+        return f"+{lap_diff} Rd"
+    return "—"
+
+
+def _gp_ranking_element(ranked: list, lo: dict) -> str:
+    """GP-Ranking-Tabelle: Pos | Nr | Name | Runden | Beste | Ø | Abstand
+    Ersetzt im GP-Modus die Rundenzeiten-Matrix. Sortierung kommt bereits
+    aus _gather_run_data (meiste Runden, dann Gesamtzeit)."""
+    mx_x, mx_y = lo["mx_x"], lo["mx_y"]
+    mx_w, mx_h = lo["mx_w"], lo["mx_h"]
+    hh         = lo["mx_hh"]
+    karts      = ranked[:MATRIX_MAX_KARTS]
+    n_karts    = len(karts)
+    if n_karts == 0:
+        return ""
+
+    # Zeilenhöhe und Schriftgröße – gleiche Skalierungs-Logik wie die Matrix
+    usable_h  = mx_h - hh
+    MAX_LARGE = 10
+    if n_karts <= MAX_LARGE:
+        row_h = usable_h / MAX_LARGE
+    else:
+        row_h = usable_h / n_karts
+    ref_row_h = usable_h / 20
+    pt = lo["mx_pt"] * (row_h / ref_row_h)
+    pt = min(pt, 9.5)
+
+    # Spaltenbreiten in mm (Summe = mx_w = 198mm)
+    COL_POS   = 10.0
+    COL_NR    = 12.0
+    COL_NAME  = 60.0
+    COL_LAPS  = 18.0
+    COL_BEST  = 32.0
+    COL_AVG   = 32.0
+    COL_GAP   = mx_w - (COL_POS + COL_NR + COL_NAME + COL_LAPS + COL_BEST + COL_AVG)  # = 34mm
+
+    # X-Anker (linke Kante jeder Spalte)
+    x_pos  = mx_x
+    x_nr   = x_pos  + COL_POS
+    x_name = x_nr   + COL_NR
+    x_laps = x_name + COL_NAME
+    x_best = x_laps + COL_LAPS
+    x_avg  = x_best + COL_BEST
+    x_gap  = x_avg  + COL_AVG
+
+    leader_laps = ranked[0]["lap_count"] if ranked else 0
+
+    parts = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    hpt = max(pt - 1.0, 4.5)
+    hy  = mx_y + 0.5
+    parts.append(e(x_pos  + 0.5, hy, "Pos.",    pt=hpt, w=700, color="#888"))
+    parts.append(e(x_nr   + 0.5, hy, "Nr.",     pt=hpt, w=700, color="#888"))
+    parts.append(e(x_name + 0.5, hy, "Name",    pt=hpt, w=700, color="#888"))
+    parts.append(e(x_laps + 0.5, hy, "Runden",  pt=hpt, w=700, color="#888"))
+    parts.append(e(x_best + 0.5, hy, "Beste",   pt=hpt, w=700, color="#888"))
+    parts.append(e(x_avg  + 0.5, hy, "Ø Runde", pt=hpt, w=700, color="#888"))
+    parts.append(e(x_gap  + 0.5, hy, "Abstand", pt=hpt, w=700, color="#888"))
+
+    # Trennlinie unter Header
+    parts.append(
+        f'<div style="position:absolute;left:{mx_x}mm;top:{mx_y+hh-0.3}mm;'
+        f'width:{mx_w}mm;height:0.3mm;background:#ccc;"></div>'
+    )
+
+    # Name auf Spaltenbreite kürzen (max ~22 Zeichen bei 60mm/pt≈6)
+    char_w_mm = pt * 0.3528 * 0.55
+    max_name_len = max(8, int((COL_NAME - 1.0) / char_w_mm))
+
+    # ── Kart-Zeilen ──────────────────────────────────────────────────────────
+    for ki, k in enumerate(karts):
+        ky = mx_y + hh + ki * row_h
+
+        # Zebrastreifen
+        if ki % 2 == 0:
+            parts.append(
+                f'<div style="position:absolute;left:{mx_x}mm;top:{ky}mm;'
+                f'width:{mx_w}mm;height:{row_h:.2f}mm;background:#f7f7f7;z-index:-1;"></div>'
+            )
+
+        ty = ky + 0.3
+
+        # Pos.
+        parts.append(e(x_pos + 0.5, ty, f'{k["position"]}.',
+                       pt=pt, w=700, color="#555"))
+        # Nr.
+        parts.append(e(x_nr  + 0.5, ty, str(k["kart_nr"]),
+                       pt=pt, w=700))
+        # Name (gekürzt)
+        name = k["name"]
+        if len(name) > max_name_len:
+            name = name[:max_name_len]
+        parts.append(e(x_name + 0.5, ty, name,
+                       pt=pt, w=400, color="#333"))
+        # Runden
+        parts.append(e(x_laps + 0.5, ty, str(k["lap_count"]),
+                       pt=pt, w=700, color="#333"))
+        # Beste
+        best = fmt_lap(k["best_us"]) if k["best_us"] else "–"
+        parts.append(e(x_best + 0.5, ty, best,
+                       pt=pt, w=700, font="GeomGraphic", color="#111"))
+        # Ø Runde
+        avg = fmt_lap(k["avg_us"]) if k["avg_us"] else "–"
+        parts.append(e(x_avg + 0.5, ty, avg,
+                       pt=pt, w=400, font="GeomGraphic", color="#333"))
+        # Abstand zum Ersten (delta_us ist in _gather_run_data berechnet)
+        if k["position"] == 1:
+            gap_str = "—"
+        else:
+            lap_diff = leader_laps - k["lap_count"] if leader_laps else None
+            gap_str = _fmt_gap(k.get("delta_us"), lap_diff)
+        # Führender bekommt "—" hellgrau; Rückstände in Schwarz
+        gap_color = "#aaa" if gap_str == "—" else "#111"
+        parts.append(e(x_gap + 0.5, ty, gap_str,
+                       pt=pt, w=600, font="GeomGraphic", color=gap_color))
+
+    return "".join(parts)
+
+
 def _bestof_elements(best_of: dict, kart_class: str, own_tid: int | None,
                      lo: dict) -> str:
     parts = []
@@ -642,6 +785,8 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
     """Gesamtes Overlay-HTML (alle Seiten) für einen Kart.
     sim_laps > 0: Runden-Daten künstlich auf diese Anzahl aufblasen (Test Überlauf)."""
     ranked   = data["ranked"]
+    run_mode = (data.get("run") or {}).get("mode", "training")
+    is_gp    = run_mode in ("gp_time", "gp_laps")
     max_laps = max((k["lap_count"] for k in ranked), default=0)
 
     # Simulation: fehlende Runden mit Zufallszeiten auffüllen
@@ -664,23 +809,28 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
     pages = []
 
     # ── Seite 1 (Haupttemplate) ──────────────────────────────────────────
-    lap_to_p1 = min(max_laps, MATRIX_MAX_LAPS)
-    body  = _header_elements(kart, ranked, L)
+    body  = _header_elements(kart, ranked, L, mode=run_mode)
     body += _laps_elements(kart, L)
     body += _stats_elements(kart, L)
     body += _chart_element(kart, L)
-    body += _matrix_element(ranked, 0, lap_to_p1, L)
+    if is_gp:
+        # GP: Ranking-Tabelle statt Rundenzeiten-Matrix; KEINE Überlaufseiten
+        body += _gp_ranking_element(ranked, L)
+    else:
+        lap_to_p1 = min(max_laps, MATRIX_MAX_LAPS)
+        body += _matrix_element(ranked, 0, lap_to_p1, L)
     body += _bestof_elements(best_of, kart["class"], kart.get("transponder_id"), L)
     body += _footer_element(L)
     pages.append(f'<div class="pg">{body}</div>')
 
-    # ── Überlaufseiten (falls > MATRIX_MAX_LAPS Runden) ──────────────────
-    for lap_from in range(MATRIX_MAX_LAPS, max_laps, MATRIX_MAX_LAPS):
-        lap_to = min(max_laps, lap_from + MATRIX_MAX_LAPS)
-        body2  = _header_elements(kart, ranked, LO)
-        body2 += _matrix_element(ranked, lap_from, lap_to, LO)
-        body2 += _footer_element(LO)
-        pages.append(f'<div class="pg">{body2}</div>')
+    # ── Überlaufseiten (nur Training, falls > MATRIX_MAX_LAPS Runden) ────
+    if not is_gp:
+        for lap_from in range(MATRIX_MAX_LAPS, max_laps, MATRIX_MAX_LAPS):
+            lap_to = min(max_laps, lap_from + MATRIX_MAX_LAPS)
+            body2  = _header_elements(kart, ranked, LO, mode=run_mode)
+            body2 += _matrix_element(ranked, lap_from, lap_to, LO)
+            body2 += _footer_element(LO)
+            pages.append(f'<div class="pg">{body2}</div>')
 
     return (f'<!doctype html><html><head><meta charset="utf-8">'
             f'<style>{_base_css()}</style></head>'
