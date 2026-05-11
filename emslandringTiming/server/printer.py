@@ -37,6 +37,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 MATRIX_MAX_KARTS = 20   # max Karts in der Matrix
 MATRIX_MAX_LAPS  = 15   # Runden auf Seite 1; ab Runde 16 → Überlaufseite
+# Eigene Runden des Karts oben links: 20 (4×5) auf Seite 1, danach
+# Überlaufseiten mit 112 Runden pro Seite (4 Spalten × 28 Zeilen).
+# Reicht für bis zu ca. 200 Runden = 3-Stunden-Endurance auf 3 Seiten/Kart.
+OWN_LAPS_ON_P1     = 20
+OWN_LAPS_PER_PAGE  = 112
 
 # ── Koordinaten für das Training-Template (alle Werte in mm) ─────────────
 # Hauptseite
@@ -582,6 +587,56 @@ def _matrix_element(ranked: list, lap_from: int, lap_to: int, lo: dict) -> str:
     return "".join(parts)
 
 
+def _own_laps_overflow_elements(kart: dict, lap_from: int, lap_to: int) -> str:
+    """Eigene Rundenzeiten als 4×28-Grid auf Überlaufseite.
+    Rendert Runden mit Index ``lap_from`` (inkl.) bis ``lap_to`` (exkl.) –
+    z.B. ``lap_from=20, lap_to=132`` zeigt die Runden 21 bis 132.
+
+    Layout: 4 Spalten je 47 mm Breite, 28 Zeilen je 7,5 mm Höhe – passt
+    auf eine A4-Seite und wirkt aufgeräumt (nicht gedrängt). Bestzeit
+    wird wie auf Seite 1 fett markiert.
+    """
+    laps = kart["laps"]
+    best = kart["best_us"]
+    n = min(lap_to, len(laps)) - lap_from
+    if n <= 0:
+        return ""
+
+    n_cols  = 4
+    n_rows  = 28
+    col_w   = 47.0
+    row_h   = 7.5
+    pt      = 9.0
+    # Zentriert: (210 - 4*47) / 2 = 11 mm Rand links
+    x0      = 11.0
+    y0      = 63.0     # gleicher Start wie Matrix auf Überlaufseite
+    prefix_w = 10.0    # Platz für "199." (3-stellige Rundennummern)
+
+    parts = []
+
+    # Subtiler Titel oben (kleine Hilfe für den Leser)
+    parts.append(e(x0, y0 - 6.0,
+                   f"Eigene Rundenzeiten – Runden {lap_from+1}–{lap_from+n}",
+                   pt=8.0, w=700, color="#888",
+                   upper=True, ls="0.08em"))
+
+    for i in range(lap_from, lap_from + n):
+        idx = i - lap_from
+        col = idx // n_rows
+        row = idx % n_rows
+        if col >= n_cols:
+            break   # Sicherheit – sollte nicht passieren wenn n ≤ 112
+        x = x0 + col * col_w
+        y = y0 + row * row_h
+        us = laps[i]
+        is_best = (us == best)
+        parts.append(e(x, y, f"{i+1}.", pt=pt, w=400, color="#888"))
+        parts.append(e(x + prefix_w, y, fmt_lap(us),
+                       pt=pt, w=700 if is_best else 600,
+                       font="GeomGraphic"))
+    return "".join(parts)
+
+
 def _fmt_gap(delta_us: int | None, lap_diff: int | None) -> str:
     """Abstand zum Führenden formatieren.
     delta_us=0 → "—" (Führender)
@@ -831,6 +886,20 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
             body2 += _matrix_element(ranked, lap_from, lap_to, LO)
             body2 += _footer_element(LO)
             pages.append(f'<div class="pg">{body2}</div>')
+
+    # ── Überlaufseiten für eigene Rundenzeiten (>20 Runden) ──────────────
+    # Beispiel 3h-Endurance mit 200 Runden:
+    # - Seite 1: Runden 1–20 (oben links)
+    # - Überlaufseite 1: Runden 21–132
+    # - Überlaufseite 2: Runden 133–200
+    own_count = kart["lap_count"]
+    if own_count > OWN_LAPS_ON_P1:
+        for lap_from in range(OWN_LAPS_ON_P1, own_count, OWN_LAPS_PER_PAGE):
+            lap_to = min(own_count, lap_from + OWN_LAPS_PER_PAGE)
+            body3  = _header_elements(kart, ranked, LO, mode=run_mode)
+            body3 += _own_laps_overflow_elements(kart, lap_from, lap_to)
+            body3 += _footer_element(LO)
+            pages.append(f'<div class="pg">{body3}</div>')
 
     return (f'<!doctype html><html><head><meta charset="utf-8">'
             f'<style>{_base_css()}</style></head>'
