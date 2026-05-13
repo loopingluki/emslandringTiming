@@ -189,6 +189,7 @@ function handleMsg(msg) {
       }
       updateRunHeader();
       updateFloatTimer();
+      updateDocTitle();
       break;
 
     case 'run_list':
@@ -203,6 +204,7 @@ function handleMsg(msg) {
       renderRunList();
       updateRunHeader();
       updateFloatTimer();
+      updateDocTitle();
       break;
 
     case 'run_updated':
@@ -218,6 +220,7 @@ function handleMsg(msg) {
       renderRunList();
       updateRunHeader();
       updateFloatTimer();
+      updateDocTitle();
       if (state.selectedRunId === msg.run_id) refreshSelectedRun();
       break;
 
@@ -245,6 +248,7 @@ function handleMsg(msg) {
         updateFinishTimer();
         updateSidebarTimers();
         updateFloatTimer();
+        updateDocTitle();
         updateProgressBar(state.runs.find(r => r.id === state.activeRun.id) || state.activeRun);
       }
       break;
@@ -381,6 +385,31 @@ function updateClientBar(msg) {
 }
 
 // ── Floating Timer ────────────────────────────────────────────────────────────
+
+// Tab-Titel mit Restzeit aktualisieren – damit der Operator den Countdown
+// auch im Browser-Tab sieht wenn er auf einer anderen Seite arbeitet.
+const DEFAULT_DOC_TITLE = 'emslandringTiming';
+function updateDocTitle() {
+  const r = state.activeRun;
+  if (!r || !['running','paused','finishing'].includes(r.status)) {
+    document.title = DEFAULT_DOC_TITLE;
+    return;
+  }
+  const runName = (state.runs.find(x => x.id === r.id) || {}).name || r.name || '';
+  const mode = r.mode || '';
+  const modeLabel =
+    (mode === 'gp_time' || mode === 'gp_laps') ? 'Grand Prix' :
+    (mode === 'training') ? 'Training' : '';
+  const t = fmtSec(r.remaining_sec || 0);
+  if (r.status === 'running') {
+    document.title = `⏱ ${t} · ${runName}${modeLabel ? ' – ' + modeLabel : ''}`;
+  } else if (r.status === 'paused') {
+    document.title = `⏸ ${t} · ${runName}`;
+  } else if (r.status === 'finishing') {
+    const ft = fmtSec(r.finish_remaining_sec || 0);
+    document.title = `🏁 ${ft} ${runName}`;
+  }
+}
 
 function updateFloatTimer() {
   const el    = document.getElementById('float-timer');
