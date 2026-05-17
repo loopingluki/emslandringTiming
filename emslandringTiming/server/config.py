@@ -42,6 +42,14 @@ _DEFAULTS: dict = {
     # Gäste auf Mobilfunk die URL erreichen können.
     "qr_enabled":                 False,
     "qr_base_url":                "",
+    # Bestenliste-Modus:
+    #   "per_kart" (Standard): pro Kart maximal 1 Eintrag pro Liste –
+    #     immer die schnellste Runde des Karts im Zeitraum
+    #   "per_run":  pro (Kart, Lauf) maximal 1 Eintrag – Karts können
+    #     mehrfach in der Liste auftauchen wenn sie in verschiedenen
+    #     Läufen Top-Zeiten gefahren haben (aber NICHT 5x aus dem
+    #     gleichen Lauf, das wäre unfair)
+    "bestof_mode":                "per_kart",
     # Defekt-Erkennung pro Kart-Klasse: jede Klasse hat eigene Schwelle
     # und WMA-Fenstergröße. Wird nur im Transponder-Modal als
     # "Defekt-Verdacht"-Badge angezeigt (kein Live-Alert im Timing).

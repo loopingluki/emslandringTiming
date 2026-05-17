@@ -1516,6 +1516,10 @@ async function loadSettings() {
   if (qrEn)  qrEn.value  = s.qr_enabled ? '1' : '0';
   if (qrUrl) qrUrl.value = s.qr_base_url || '';
 
+  // Bestenliste-Modus
+  const bom = document.getElementById('s-bestof-mode');
+  if (bom) bom.value = s.bestof_mode || 'per_kart';
+
   await loadPrinters(s.printer);
 }
 
@@ -1621,6 +1625,7 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 6,
     qr_enabled:         document.getElementById('s-qr-enabled')?.value === '1',
     qr_base_url:       (document.getElementById('s-qr-base-url')?.value || '').trim(),
+    bestof_mode:        document.getElementById('s-bestof-mode')?.value || 'per_kart',
   };
   // Aktuell sichtbare Defekt-Kategorie ins Buffer übernehmen, dann ALLE
   // Kategorien mit speichern (Pill-Wechsel hat sie schon vorher geflusht).

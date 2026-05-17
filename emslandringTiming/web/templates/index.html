@@ -277,6 +277,30 @@
         </div>
       </div>
 
+      <!-- Bestenliste: Mehrfach-Einträge pro Kart -->
+      <div class="settings-section">
+        <h3>Bestenliste · Ranking-Modus</h3>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 10px">
+          Bestimmt wie oft ein Kart in einer Bestenliste auftauchen kann.
+          Wirkt auf Tag/Woche/Monat/Jahr und auf den Ausdruck.
+        </p>
+        <div class="settings-grid">
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>Modus</label>
+            <select id="s-bestof-mode">
+              <option value="per_kart">Pro Kart 1 Eintrag (Standard – immer beste Zeit)</option>
+              <option value="per_run">Pro Lauf 1 Eintrag (Kart kann mehrfach auftauchen)</option>
+            </select>
+            <small style="color:var(--text-muted)">
+              <b>Pro Kart:</b> Jedes Kart erscheint maximal einmal pro Liste mit seiner
+              schnellsten Zeit im Zeitraum. <b>Pro Lauf:</b> Pro (Kart, Lauf)-Kombination
+              ein Eintrag – so kann Kart 52 z.B. mit drei verschiedenen Top-Zeiten aus
+              drei Läufen mehrfach in der Wochenliste stehen.
+            </small>
+          </div>
+        </div>
+      </div>
+
       <!-- QR-Code für Bestenlisten-Einträge -->
       <div class="settings-section">
         <h3>Bestenliste · QR-Code</h3>

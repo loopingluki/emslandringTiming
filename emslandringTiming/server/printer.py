@@ -189,7 +189,10 @@ async def _best_of(kart_class: str, since_dt: datetime, limit: int = 8) -> list[
     ids = [int(k) for k, v in tps.items() if v.get("class") == kart_class]
     if not ids:
         return []
-    rows = await database.get_best_laps_since(since_dt.timestamp(), ids, limit_per_kart=1)
+    mode = cfg.get().get("bestof_mode") or "per_kart"
+    rows = await database.get_best_laps_since(
+        since_dt.timestamp(), ids, limit_per_kart=1, mode=mode,
+    )
     out = []
     for r in rows[:limit]:
         info = cfg.get_kart_info(r["transponder_id"]) or {}

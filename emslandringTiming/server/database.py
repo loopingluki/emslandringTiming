@@ -325,10 +325,21 @@ async def get_transponder_stats() -> list[dict]:
 
 
 async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | None = None,
-                              limit_per_kart: int = 1) -> list[dict]:
-    """Beste Rundenzeit pro Kart (Transponder) seit since_unix.
-    Optional gefiltert auf eine Liste Transponder-IDs (für Klassen-Filter).
-    Rückgabe: [{transponder_id, kart_nr, lap_time_us, timestamp_us, run_date, run_started_at}]
+                              limit_per_kart: int = 1,
+                              mode: str = "per_kart") -> list[dict]:
+    """Beste Rundenzeiten seit since_unix für die Bestenliste.
+
+    ``mode``:
+      * ``"per_kart"`` (Standard): pro Kart max. ``limit_per_kart`` Runden –
+        die schnellsten. Klassisches Ranking.
+      * ``"per_run"``: pro (Kart, Lauf) max. 1 Runde – die schnellste
+        dieses Karts in diesem Lauf. Karts können mehrfach in der
+        Liste auftauchen wenn sie in verschiedenen Läufen Top-Zeiten
+        gefahren haben.
+
+    Optional gefiltert auf eine Liste Transponder-IDs (Klassen-Filter).
+    Rückgabe: [{transponder_id, kart_nr, lap_time_us, timestamp_us,
+                run_id, run_date, run_started_at, run_kart_name, claim_name}]
     """
     # Namens-Priorität (höchste zuerst):
     #   1. rc.name   = Customer hat sich via QR-Scan selbst eingetragen
@@ -362,13 +373,29 @@ async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | No
         async with db.execute(q, params) as cur:
             rows = await cur.fetchall()
 
-    best: dict[int, list[dict]] = {}
-    for r in rows:
-        tid = r["transponder_id"]
-        lst = best.setdefault(tid, [])
-        if len(lst) < limit_per_kart:
-            lst.append(dict(r))
-    result = [d for lst in best.values() for d in lst]
+    # rows ist bereits nach lap_time_us ASC sortiert. Wir dedupen je
+    # nach Modus und behalten dabei automatisch die schnellste Runde
+    # pro Bucket.
+    if mode == "per_run":
+        # Bucket = (transponder_id, run_id) → max. 1 Eintrag pro Bucket
+        seen: set[tuple[int, int]] = set()
+        result: list[dict] = []
+        for r in rows:
+            key = (r["transponder_id"], r["run_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(dict(r))
+    else:
+        # Klassisch: max. ``limit_per_kart`` Einträge pro Kart
+        best: dict[int, list[dict]] = {}
+        for r in rows:
+            tid = r["transponder_id"]
+            lst = best.setdefault(tid, [])
+            if len(lst) < limit_per_kart:
+                lst.append(dict(r))
+        result = [d for lst in best.values() for d in lst]
+
     result.sort(key=lambda d: d["lap_time_us"])
     return result
 
