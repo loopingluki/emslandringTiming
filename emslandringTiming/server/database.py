@@ -314,11 +314,17 @@ async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | No
     Optional gefiltert auf eine Liste Transponder-IDs (für Klassen-Filter).
     Rückgabe: [{transponder_id, kart_nr, lap_time_us, timestamp_us, run_date, run_started_at}]
     """
+    # rkn.name = der im Lauf vergebene Kart-Name (z.B. "Bastian") – wird
+    # via LEFT JOIN aufgelöst. Wenn nicht gesetzt, fällt das Frontend
+    # auf den globalen Namen aus der Konfiguration zurück.
     q = """
       SELECT p.transponder_id, p.kart_nr, p.lap_time_us, p.timestamp_us,
-             r.date AS run_date, r.started_at AS run_started_at, p.id AS pid
+             r.date AS run_date, r.started_at AS run_started_at, p.id AS pid,
+             p.run_id AS run_id, rkn.name AS run_kart_name
       FROM passings p
       JOIN runs r ON p.run_id = r.id
+      LEFT JOIN run_kart_names rkn
+             ON rkn.run_id = p.run_id AND rkn.kart_nr = p.kart_nr
       WHERE p.lap_time_us IS NOT NULL
         AND r.started_at >= ?
     """

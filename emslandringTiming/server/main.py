@@ -199,16 +199,22 @@ async def api_add_run():
 
 @app.get("/api/runs/{run_id}")
 async def api_get_run(run_id: int):
+    # Gespeicherte per-Lauf Kart-Namen (override gegenüber global) – wird
+    # vom Frontend auch dann gebraucht wenn der Lauf noch keine Passings
+    # hat (Operator passt Namen VOR dem Start an).
+    kart_names_db = await database.get_run_kart_names(run_id)
     if engine.run_id == run_id and engine.status not in ("none", "done"):
         # Aktiver Lauf: Live-Daten aus engine
         snap = engine.snapshot()
         run = await database.get_run(run_id)
         run["status"] = engine.status
         run["karts"] = snap["karts"]
+        run["kart_names"] = kart_names_db
         return run
     result = await run_manager.get_run_with_karts(run_id)
     if not result:
         raise HTTPException(404, "Lauf nicht gefunden")
+    result["kart_names"] = kart_names_db
     return result
 
 

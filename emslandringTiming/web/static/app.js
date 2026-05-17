@@ -1038,15 +1038,25 @@ async function openKartNameModal(runId) {
   let transponders = [];
   try { transponders = await fetch('/api/transponders').then(r => r.json()); } catch(_) {}
 
+  // Lauf-spezifische Kart-Namen IMMER vom Server holen – auch wenn der
+  // Lauf gerade aktiv ist. Sonst werden vor dem ersten Passing nur die
+  // globalen Namen angezeigt obwohl Operator schon "Bastian" gespeichert
+  // hatte. Quelle der Wahrheit ist die Tabelle run_kart_names in der DB.
   const runKartNames = {};
-  if (state.activeRun && state.activeRun.id === runId) {
-    state.karts.forEach(k => { runKartNames[k.kart_nr] = k.name; });
-  } else {
-    try {
-      const r = await fetch(`/api/runs/${runId}`).then(r => r.json());
-      (r.karts || []).forEach(k => { runKartNames[k.kart_nr] = k.name; });
-    } catch(_) {}
-  }
+  try {
+    const r = await fetch(`/api/runs/${runId}`).then(r => r.json());
+    // kart_names: {kart_nr: name} – direkt aus run_kart_names Tabelle
+    if (r.kart_names) {
+      for (const [nr, name] of Object.entries(r.kart_names)) {
+        runKartNames[+nr] = name;
+      }
+    }
+    // Fallback für Karts die noch keinen Override haben aber schon
+    // Passings → nimm den Live-Namen aus karts.
+    (r.karts || []).forEach(k => {
+      if (runKartNames[k.kart_nr] == null) runKartNames[k.kart_nr] = k.name;
+    });
+  } catch(_) {}
 
   if (!transponders.length) {
     list.innerHTML = '<p style="color:var(--text-muted);font-size:12px">Keine Transponder konfiguriert.</p>';

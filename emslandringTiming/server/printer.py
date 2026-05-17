@@ -184,11 +184,16 @@ async def _best_of(kart_class: str, since_dt: datetime, limit: int = 8) -> list[
     out = []
     for r in rows[:limit]:
         info = cfg.get_kart_info(r["transponder_id"]) or {}
+        # Lauf-spezifischer Kart-Name hat Priorität (z.B. "Bastian"
+        # wurde für genau diesen Lauf eingetragen). Wenn der Lauf
+        # keinen Override hatte → globaler Name aus der Konfiguration.
+        run_name = (r.get("run_kart_name") or "").strip()
+        display_name = run_name or info.get("name") or "Kart ?"
         out.append({
             "pid": r.get("pid"),
             "transponder_id": r["transponder_id"],
             "kart_nr": info.get("kart_nr"),
-            "name": info.get("name", f"Kart ?"),
+            "name": display_name,
             "lap_time_us": r["lap_time_us"],
             "run_date": r["run_date"],
             "run_started_at": r["run_started_at"],
