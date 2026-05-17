@@ -966,9 +966,17 @@ def _bestof_elements(best_of: dict, kart_class: str, own_tid: int | None,
             else:
                 ts = ""
 
-            kart_lbl = (f'Kart {ent["kart_nr"]}'
-                        if ent.get("kart_nr") is not None
-                        else ent.get("name", "?"))
+            # Namens-Priorität kommt schon aus _best_of:
+            #   Customer-Claim ("Bastian") > Lauf-Override > globaler Name ("Kart 52")
+            # → einfach ent["name"] nehmen (fällt automatisch auf "Kart 52" zurück
+            # wenn nichts gesetzt). Fallback nur falls Name fehlt UND kart_nr da ist.
+            name = (ent.get("name") or "").strip()
+            if name:
+                kart_lbl = name
+            elif ent.get("kart_nr") is not None:
+                kart_lbl = f'Kart {ent["kart_nr"]}'
+            else:
+                kart_lbl = "?"
 
             col_bold = 900 if is_own else 400
             t_bold   = 900 if is_own else 700
