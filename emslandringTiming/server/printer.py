@@ -556,13 +556,11 @@ def _qr_overlay_elements(qr: dict, lo: dict) -> str:
         f'<div style="position:absolute;left:{text_x}mm;top:{ly}mm;'
         f'width:{text_w}mm;height:{lh}mm;'
         f'display:flex;flex-direction:column;justify-content:center;'
-        f'font-family:Lato,sans-serif;color:#111;line-height:1.15;">'
-        f'<div style="font-weight:900;font-size:9pt;letter-spacing:0.04em;'
-        f'color:#c62828;">🏆 GLÜCKWUNSCH!</div>'
-        f'<div style="font-weight:700;font-size:7.5pt;margin-top:1mm;">'
+        f'font-family:Lato,sans-serif;color:#111;line-height:1.2;">'
+        f'<div style="font-weight:800;font-size:9pt;color:#c62828;">'
         f'Du bist in der Bestenliste!</div>'
-        f'<div style="font-weight:400;font-size:6.5pt;margin-top:0.8mm;'
-        f'color:#444;">Scanne den Code, trag deinen Namen ein und verewige dich!</div>'
+        f'<div style="font-weight:500;font-size:7.5pt;margin-top:1.5mm;'
+        f'color:#333;">Scanne den Code, trag deinen Namen ein und verewige dich!</div>'
         f'</div>'
     )
     return "".join(parts)
