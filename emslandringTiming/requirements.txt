@@ -4,3 +4,4 @@ aiosqlite>=0.20.0
 python-multipart>=0.0.9
 firebase-admin>=6.0.0
 pikepdf>=8.0.0
+segno>=1.6.0

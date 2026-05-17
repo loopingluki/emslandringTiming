@@ -48,6 +48,22 @@ CREATE TABLE IF NOT EXISTS decoder_health (
     loop_signal INTEGER
 );
 
+-- Customer-Claims für Bestenlisten-Einträge:
+-- Wenn ein Kart eine Rekord-Runde fährt, generieren wir ein Token,
+-- drucken QR-Code mit URL /record/<token>. Customer scannt, trägt
+-- seinen Namen ein → name wird in Bestenliste statt "Kart 12" angezeigt.
+-- Locked nach 24h: ab claimed_at + 86400s können Namen nicht mehr
+-- geändert werden (verhindert verspätete Sabotage durch andere).
+CREATE TABLE IF NOT EXISTS record_claims (
+    passing_id  INTEGER PRIMARY KEY,
+    token       TEXT    NOT NULL UNIQUE,
+    name        TEXT,
+    claimed_at  REAL,
+    created_at  REAL    NOT NULL,
+    FOREIGN KEY (passing_id) REFERENCES passings(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_record_claims_token ON record_claims(token);
+
 -- Indizes für Performance bei wachsender Datenmenge
 -- (ohne idx_passings_transponder_id würden GROUP BY und Window-
 -- Funktionen wie ROW_NUMBER() OVER (PARTITION BY transponder_id ...)
@@ -314,17 +330,23 @@ async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | No
     Optional gefiltert auf eine Liste Transponder-IDs (für Klassen-Filter).
     Rückgabe: [{transponder_id, kart_nr, lap_time_us, timestamp_us, run_date, run_started_at}]
     """
-    # rkn.name = der im Lauf vergebene Kart-Name (z.B. "Bastian") – wird
-    # via LEFT JOIN aufgelöst. Wenn nicht gesetzt, fällt das Frontend
-    # auf den globalen Namen aus der Konfiguration zurück.
+    # Namens-Priorität (höchste zuerst):
+    #   1. rc.name   = Customer hat sich via QR-Scan selbst eingetragen
+    #   2. rkn.name  = Operator hat im Lauf einen Namen vergeben
+    #   3. (Frontend-Fallback)  globaler Kart-Name aus der Konfiguration
     q = """
       SELECT p.transponder_id, p.kart_nr, p.lap_time_us, p.timestamp_us,
              r.date AS run_date, r.started_at AS run_started_at, p.id AS pid,
-             p.run_id AS run_id, rkn.name AS run_kart_name
+             p.run_id AS run_id,
+             rkn.name AS run_kart_name,
+             rc.name  AS claim_name,
+             rc.passing_id AS claim_passing_id
       FROM passings p
       JOIN runs r ON p.run_id = r.id
       LEFT JOIN run_kart_names rkn
              ON rkn.run_id = p.run_id AND rkn.kart_nr = p.kart_nr
+      LEFT JOIN record_claims rc
+             ON rc.passing_id = p.id
       WHERE p.lap_time_us IS NOT NULL
         AND r.started_at >= ?
     """
@@ -353,7 +375,98 @@ async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | No
 
 async def delete_passing(passing_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
+        # Claim hängt per FK an der Passing-ID – beim Löschen der Runde
+        # geht auch der Name automatisch weg (ON DELETE CASCADE).
         await db.execute("DELETE FROM passings WHERE id = ?", (passing_id,))
+        await db.commit()
+
+
+# ── Bestenlisten-Claims (Customer-eingetragene Namen) ──────────────────────
+
+async def get_or_create_claim_token(passing_id: int) -> str:
+    """Token für ein Passing holen – wird beim ersten Aufruf erzeugt.
+
+    Idempotent: mehrfaches Drucken derselben Rekord-Runde produziert
+    immer denselben Token (= dieselbe QR-URL).
+    """
+    import secrets, time
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT token FROM record_claims WHERE passing_id = ?", (passing_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            return row["token"]
+        # Neuer Token – 11 Zeichen URL-safe (~64 Bit Entropie).
+        token = secrets.token_urlsafe(8)
+        await db.execute(
+            "INSERT INTO record_claims (passing_id, token, created_at) VALUES (?, ?, ?)",
+            (passing_id, token, time.time()),
+        )
+        await db.commit()
+        return token
+
+
+async def get_claim_by_token(token: str) -> dict | None:
+    """Claim-Daten anhand des Tokens – inkl. Passing- und Lauf-Metadaten."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT c.passing_id, c.token, c.name, c.claimed_at, c.created_at,
+                      p.transponder_id, p.kart_nr, p.lap_time_us, p.run_id,
+                      r.date AS run_date, r.name AS run_name
+               FROM record_claims c
+               JOIN passings p ON p.id = c.passing_id
+               JOIN runs     r ON r.id = p.run_id
+               WHERE c.token = ?""",
+            (token,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def set_claim_name(token: str, name: str) -> bool:
+    """Setzt den Customer-Namen. Gibt True zurück bei Erfolg, False
+    wenn Token nicht existiert oder bereits gelocked (>24 h nach
+    erstem Eintrag)."""
+    import time
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT claimed_at FROM record_claims WHERE token = ?", (token,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        if row["claimed_at"] is not None and now - row["claimed_at"] > 86400:
+            # 24 h Lock abgelaufen → kein Update mehr erlaubt.
+            return False
+        # claimed_at wird beim ERSTEN Setzen geschrieben; spätere Updates
+        # (innerhalb 24 h) lassen claimed_at unverändert, sonst würde der
+        # Lock-Timer immer neu starten.
+        if row["claimed_at"] is None:
+            await db.execute(
+                "UPDATE record_claims SET name = ?, claimed_at = ? WHERE token = ?",
+                (name, now, token),
+            )
+        else:
+            await db.execute(
+                "UPDATE record_claims SET name = ? WHERE token = ?",
+                (name, token),
+            )
+        await db.commit()
+        return True
+
+
+async def delete_claim(passing_id: int) -> None:
+    """Admin-Reset: Claim-Eintrag löschen – Name fällt zurück auf
+    Default (Kart-Override aus Lauf, sonst globaler Name)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM record_claims WHERE passing_id = ?", (passing_id,)
+        )
         await db.commit()
 
 

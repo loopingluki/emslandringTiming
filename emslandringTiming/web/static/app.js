@@ -1330,16 +1330,25 @@ async function renderRankings() {
       ? new Date(e.run_started_at * 1000).toLocaleDateString('de-DE')
       : (e.run_date || '—');
     const pidAttr = e.pid != null ? `data-pid="${e.pid}"` : '';
+    // Bei Customer-Claim: kleinen Reset-Button (✕) zusätzlich zum Lösch-Button.
+    // Reset = nur Customer-Name entfernen, Runde bleibt in der Bestenliste.
+    const claimBadge = e.claimed
+      ? `<span style="display:inline-block;padding:1px 6px;margin-left:6px;background:rgba(255,214,0,.18);color:#ffd600;border-radius:8px;font-size:10px;font-weight:600">Customer</span>`
+      : '';
+    const resetBtn = e.claimed && e.pid != null
+      ? `<button class="btn btn-sm rk-claim-del" ${pidAttr}
+                title="Customer-Eintrag zurücksetzen (Runde bleibt)">✕ Name</button>`
+      : '';
     const delBtn = e.pid != null
-      ? `<button class="btn btn-sm btn-red rk-del" ${pidAttr} title="Eintrag löschen">🗑 Löschen</button>`
+      ? `<button class="btn btn-sm btn-red rk-del" ${pidAttr} title="Komplette Runde löschen">🗑</button>`
       : '<span style="color:var(--text-muted);font-size:10px">—</span>';
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:6px 8px;color:var(--text-dim)">${i + 1}</td>
-      <td style="padding:6px 8px"><b>${e.kart_nr ?? '?'}</b> &nbsp;<span style="color:var(--text-dim)">${e.name || ''}</span></td>
+      <td style="padding:6px 8px"><b>${e.kart_nr ?? '?'}</b> &nbsp;<span style="color:var(--text-dim)">${e.name || ''}</span>${claimBadge}</td>
       <td style="padding:6px 8px">${klass}</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;font-weight:600">${fmtTime(e.lap_time_us)}</td>
       <td style="padding:6px 8px;color:var(--text-dim)">${dt}</td>
-      <td style="padding:6px 8px;text-align:right">${delBtn}</td>
+      <td style="padding:6px 8px;text-align:right;white-space:nowrap">${resetBtn} ${delBtn}</td>
     </tr>`;
   }).join('');
 
@@ -1353,6 +1362,25 @@ async function renderRankings() {
         const res = await fetch(`/api/passing/${pid}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         showToast && showToast('Eintrag gelöscht', 'ok');
+        renderRankings();
+      } catch(err) {
+        showToast && showToast('Fehler: ' + err.message, 'err');
+        btn.disabled = false;
+      }
+    });
+  });
+
+  // Customer-Claim zurücksetzen (Runde bleibt, nur Name geht weg)
+  tbody.querySelectorAll('.rk-claim-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.pid;
+      if (!pid) return;
+      if (!confirm('Customer-Namen zurücksetzen?\nDie Runde bleibt in der Bestenliste, nur der eingetragene Name wird gelöscht.')) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/bestof/claim/${pid}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        showToast && showToast('Customer-Name zurückgesetzt', 'ok');
         renderRankings();
       } catch(err) {
         showToast && showToast('Fehler: ' + err.message, 'err');
@@ -1481,6 +1509,13 @@ async function loadSettings() {
 
   const netArea = document.getElementById('s-network-printers');
   if (netArea) netArea.value = (s.network_printers || []).join('\n');
+
+  // QR-Code (Bestenliste)
+  const qrEn = document.getElementById('s-qr-enabled');
+  const qrUrl = document.getElementById('s-qr-base-url');
+  if (qrEn)  qrEn.value  = s.qr_enabled ? '1' : '0';
+  if (qrUrl) qrUrl.value = s.qr_base_url || '';
+
   await loadPrinters(s.printer);
 }
 
@@ -1584,6 +1619,8 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     ampel_enabled:      document.getElementById('s-ampel-enabled').checked,
     ampel_relay_red:    +document.getElementById('s-ampel-relay-red').value   || 4,
     ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 6,
+    qr_enabled:         document.getElementById('s-qr-enabled')?.value === '1',
+    qr_base_url:       (document.getElementById('s-qr-base-url')?.value || '').trim(),
   };
   // Aktuell sichtbare Defekt-Kategorie ins Buffer übernehmen, dann ALLE
   // Kategorien mit speichern (Pill-Wechsel hat sie schon vorher geflusht).

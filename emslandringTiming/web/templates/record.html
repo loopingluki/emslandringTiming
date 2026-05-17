@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#c62828">
+<title>Bestenliste · Emslandring Dankern</title>
+<style>
+  @font-face { font-family:'Bebas Neue'; src:local('Bebas Neue'), url('/fonts/BebasNeue-Regular.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow Condensed'; font-weight:700; src:local('Barlow Condensed Bold'), url('/fonts/BarlowCondensed-Bold.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow'; src:local('Barlow'), url('/fonts/Barlow-Regular.ttf') format('truetype'); font-display:swap; }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body { font-family:'Barlow',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#1a1008; color:#f0f0f0; overflow-x:hidden;
+         -webkit-tap-highlight-color:transparent; }
+
+  /* Header */
+  .header { background:linear-gradient(160deg,#c62828 0%,#7a1414 100%);
+            padding:32px 24px 28px; text-align:center; position:relative; overflow:hidden; }
+  .header::before { content:''; position:absolute; inset:0;
+                    background:radial-gradient(circle at 20% 20%,rgba(255,214,0,.15),transparent 60%); }
+  .trophy { font-size:64px; line-height:1; margin-bottom:8px; position:relative;
+            filter:drop-shadow(0 4px 12px rgba(0,0,0,.4)); }
+  .title { font-family:'Bebas Neue','Impact',sans-serif; font-size:42px; line-height:1;
+           letter-spacing:.04em; color:#fff; position:relative; }
+  .sub { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+         font-size:14px; letter-spacing:.3em; text-transform:uppercase;
+         color:#ffd600; margin-top:8px; position:relative; }
+
+  /* Main card */
+  .card { background:#f0f0f0; color:#111; margin:0 16px; margin-top:-18px;
+          border-radius:14px; padding:24px 22px; position:relative; z-index:2;
+          box-shadow:0 12px 32px rgba(0,0,0,.4); }
+  .kart-label { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+                font-size:12px; letter-spacing:.25em; text-transform:uppercase;
+                color:#888; }
+  .kart-info { display:flex; align-items:baseline; gap:12px; margin-top:4px;
+               padding-bottom:14px; border-bottom:1px solid #ddd; }
+  .kart-num { font-family:'Bebas Neue','Impact',sans-serif; font-size:54px;
+              color:#c62828; line-height:1; font-style:italic; }
+  .kart-meta { display:flex; flex-direction:column; gap:2px; }
+  .kart-meta .cls { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+                    font-size:13px; letter-spacing:.18em; text-transform:uppercase;
+                    color:#555; }
+  .kart-meta .global { font-size:14px; color:#666; }
+
+  .lap-time-block { margin-top:16px; }
+  .lap-label { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+               font-size:12px; letter-spacing:.25em; text-transform:uppercase;
+               color:#888; }
+  .lap-time { font-family:'Bebas Neue','Impact',sans-serif; font-size:64px;
+              line-height:1; color:#111; margin-top:4px; letter-spacing:.04em; }
+
+  .positions { margin-top:18px; display:flex; flex-wrap:wrap; gap:8px; }
+  .pos-pill { background:#fff; border:2px solid #c62828; border-radius:24px;
+              padding:8px 14px; display:flex; align-items:center; gap:8px;
+              font-family:'Barlow',sans-serif; font-weight:600; font-size:13px;
+              color:#c62828; }
+  .pos-pill .num { font-family:'Bebas Neue','Impact',sans-serif; font-size:20px;
+                   line-height:1; }
+  .pos-pill.gold { background:#ffd600; border-color:#ffd600; color:#1a1008; }
+  .pos-pill.silver { background:#d0d0d0; border-color:#d0d0d0; color:#1a1008; }
+  .pos-pill.bronze { background:#cd7f32; border-color:#cd7f32; color:#fff; }
+
+  /* Form */
+  .form { padding:22px 16px 32px; }
+  .form-intro { text-align:center; font-size:17px; color:#f0f0f0;
+                line-height:1.45; margin-bottom:18px; padding:0 8px; }
+  .form-intro strong { color:#ffd600; }
+  input[type="text"] { width:100%; padding:18px 16px; font-size:20px;
+                       font-family:'Barlow',sans-serif; font-weight:600;
+                       background:#fff; color:#111; border:none; border-radius:10px;
+                       text-align:center; }
+  input[type="text"]:focus { outline:3px solid #ffd600; }
+  input[type="text"]::placeholder { color:#aaa; font-weight:400; }
+  .hint { font-size:12px; color:#888; text-align:center; margin-top:8px; }
+
+  .btn { display:block; width:100%; margin-top:18px; padding:18px;
+         font-family:'Barlow Condensed',sans-serif; font-weight:700;
+         font-size:18px; letter-spacing:.18em; text-transform:uppercase;
+         border:none; border-radius:10px; cursor:pointer;
+         background:#2e7d32; color:#fff; transition:opacity .15s; }
+  .btn:disabled { opacity:.5; }
+  .btn:active { transform:translateY(1px); }
+
+  /* Status states */
+  .status { padding:24px 22px; margin:16px; border-radius:12px;
+            text-align:center; font-size:16px; line-height:1.5; }
+  .status.error { background:#4a0a0a; color:#fff;
+                  border-left:5px solid #c62828; }
+  .status.success { background:#0b3d10; color:#fff;
+                    border-left:5px solid #2e7d32; }
+  .status.locked { background:#2a2410; color:#f0f0f0;
+                   border-left:5px solid #ffd600; }
+  .status h3 { font-family:'Bebas Neue','Impact',sans-serif; font-size:32px;
+               line-height:1; margin-bottom:8px; letter-spacing:.04em; }
+
+  .footer { text-align:center; padding:24px 16px; color:#666; font-size:11px;
+            letter-spacing:.1em; text-transform:uppercase; }
+  .footer .brand { font-family:'Bebas Neue','Impact',sans-serif; font-size:16px;
+                   letter-spacing:.08em; color:#888; }
+
+  .spinner { display:inline-block; width:18px; height:18px; vertical-align:middle;
+             border:2px solid rgba(255,255,255,.3); border-top-color:#fff;
+             border-radius:50%; animation:spin .6s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  #screen-loading { padding:48px 24px; text-align:center; color:#888; }
+</style>
+</head>
+<body>
+
+<div id="screen-loading">
+  <div class="spinner" style="border-color:rgba(255,255,255,.2);border-top-color:#ffd600;width:32px;height:32px;"></div>
+  <div style="margin-top:12px;font-size:14px;letter-spacing:.1em;text-transform:uppercase">Lade …</div>
+</div>
+
+<div id="screen-content" style="display:none">
+  <div class="header">
+    <div class="trophy">🏆</div>
+    <div class="title">Glückwunsch!</div>
+    <div class="sub" id="hero-sub">Du bist in der Bestenliste!</div>
+  </div>
+
+  <div class="card">
+    <div class="kart-label">Deine Bestrunde</div>
+    <div class="kart-info">
+      <div class="kart-num" id="kart-num">--</div>
+      <div class="kart-meta">
+        <div class="cls" id="kart-class">—</div>
+        <div class="global" id="kart-global">Kart --</div>
+      </div>
+    </div>
+
+    <div class="lap-time-block">
+      <div class="lap-label">Rundenzeit</div>
+      <div class="lap-time" id="lap-time">-:--.---</div>
+    </div>
+
+    <div class="positions" id="positions"></div>
+  </div>
+
+  <div class="form">
+    <p class="form-intro">
+      Trag deinen Namen ein und<br>
+      <strong>verewige dich in der Bestenliste!</strong>
+    </p>
+    <input type="text" id="name-input" placeholder="Dein Name"
+           maxlength="25" autocomplete="off" autocapitalize="words"
+           spellcheck="false">
+    <p class="hint">2–25 Zeichen · keine Beleidigungen</p>
+    <button class="btn" id="btn-submit">Eintragen</button>
+  </div>
+</div>
+
+<div id="screen-status" style="display:none"></div>
+
+<div class="footer">
+  <div class="brand">Emslandring Dankern</div>
+  <div style="margin-top:4px">Kartbahn · Zeitnahme</div>
+</div>
+
+<script>
+const TOKEN = location.pathname.split('/').pop();
+const PERIOD_LABELS = {
+  day:   'Tagesbestzeit',
+  week:  'Wochenbestzeit',
+  month: 'Monatsbestzeit',
+  year:  'Jahresbestzeit',
+};
+
+async function loadClaim() {
+  let data;
+  try {
+    const res = await fetch(`/api/record/${TOKEN}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showStatus('error', '😕 Hoppla!', err.detail || 'Diese Runde wurde nicht gefunden.');
+      return;
+    }
+    data = await res.json();
+  } catch (e) {
+    showStatus('error', 'Verbindung fehlgeschlagen',
+      'Bitte versuche es gleich nochmal.');
+    return;
+  }
+  if (!data.in_any_top) {
+    showStatus('error', '⏳ Zu spät',
+      'Diese Bestzeit ist nicht mehr in der Bestenliste. Eintrag nicht mehr möglich.');
+    return;
+  }
+  renderContent(data);
+}
+
+function renderContent(d) {
+  document.getElementById('screen-loading').style.display = 'none';
+  document.getElementById('screen-content').style.display = '';
+
+  document.getElementById('kart-num').textContent = d.kart_nr ?? '--';
+  document.getElementById('kart-class').textContent = d.kart_class || '—';
+  document.getElementById('kart-global').textContent =
+    `Aktuell: ${d.name || d.global_name}`;
+  document.getElementById('lap-time').textContent = d.lap_time_str || '-:--.---';
+
+  // Hero-Spruch
+  if (d.best_period && d.best_pos) {
+    document.getElementById('hero-sub').textContent =
+      `Platz ${d.best_pos} der ${PERIOD_LABELS[d.best_period]}`;
+  }
+
+  // Position-Pills
+  const pillsEl = document.getElementById('positions');
+  pillsEl.innerHTML = '';
+  for (const p of ['day','week','month','year']) {
+    const pos = d.positions[p];
+    if (!pos) continue;
+    const cls = pos === 1 ? 'gold' : pos === 2 ? 'silver' : pos === 3 ? 'bronze' : '';
+    const pill = document.createElement('div');
+    pill.className = `pos-pill ${cls}`;
+    pill.innerHTML = `<span class="num">${pos}.</span> ${PERIOD_LABELS[p]}`;
+    pillsEl.appendChild(pill);
+  }
+
+  // Bei locked: Anzeigen aber Eingabe deaktivieren
+  if (d.locked) {
+    document.getElementById('name-input').disabled = true;
+    document.getElementById('name-input').value = d.name || '';
+    const btn = document.getElementById('btn-submit');
+    btn.textContent = '🔒 Gesperrt nach 24h';
+    btn.disabled = true;
+    return;
+  }
+
+  if (d.name) {
+    document.getElementById('name-input').value = d.name;
+    document.getElementById('btn-submit').textContent = 'Namen aktualisieren';
+  }
+
+  document.getElementById('btn-submit').addEventListener('click', submit);
+  document.getElementById('name-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+  });
+}
+
+async function submit() {
+  const input = document.getElementById('name-input');
+  const btn = document.getElementById('btn-submit');
+  const name = input.value.trim();
+  if (!name) {
+    input.focus();
+    return;
+  }
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const res = await fetch(`/api/record/${TOKEN}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || 'Eintrag fehlgeschlagen.');
+      btn.disabled = false;
+      btn.textContent = originalText;
+      return;
+    }
+    showStatus('success', '✓ Eingetragen!',
+      `Du bist als <strong>${escapeHtml(data.name)}</strong> in der Bestenliste verewigt.<br><br>` +
+      `<small style="opacity:.7">Du kannst den Namen innerhalb von 24 Stunden ` +
+      `noch ändern, dann wird er gesperrt.</small>`);
+  } catch (e) {
+    alert('Verbindung fehlgeschlagen. Bitte nochmal versuchen.');
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+function showStatus(kind, title, msg) {
+  document.getElementById('screen-loading').style.display = 'none';
+  document.getElementById('screen-content').style.display = 'none';
+  const el = document.getElementById('screen-status');
+  el.className = `status ${kind}`;
+  el.innerHTML = `<h3>${title}</h3><div>${msg}</div>`;
+  el.style.display = '';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadClaim();
+</script>
+
+</body>
+</html>

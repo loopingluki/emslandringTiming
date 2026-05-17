@@ -1,0 +1,87 @@
+# Profanity-Wortliste für Customer-Name-Eingabe.
+# Eine Zeile pro Wort, Groß-/Kleinschreibung egal.
+# Lokale Ergänzungen können einfach unten angehängt werden.
+# Zeilen mit '#' am Anfang sind Kommentare und werden ignoriert.
+
+# Beleidigungen
+arsch
+arschloch
+arschgeige
+arschkriecher
+arschloecher
+schwein
+schweinehund
+hure
+hurensohn
+nutte
+schlampe
+zicke
+miststueck
+miststück
+drecksau
+dreckschwein
+drecksack
+fotze
+fotzen
+
+# Sexuelle Begriffe
+penis
+pimmel
+schwanz
+sperma
+muschi
+moese
+möse
+vagina
+vulva
+ficken
+fick
+fickt
+ficker
+vögeln
+voegeln
+geil
+wichser
+wichsen
+wichs
+wanker
+
+# Vulgär
+scheisse
+scheiße
+shit
+fuck
+fucking
+fucker
+bitch
+asshole
+bastard
+dumbass
+
+# Rassistisch / NS / Nazi
+nazi
+nazis
+hitler
+sieg
+heil
+ss
+nsdap
+neger
+niger
+nigger
+kanake
+spast
+mongo
+
+# Sonstige Schimpfwörter
+idiot
+trottel
+depp
+volldepp
+vollpfosten
+spasti
+schwuchtel
+tunte
+kacke
+kackbratze
+ficknudel

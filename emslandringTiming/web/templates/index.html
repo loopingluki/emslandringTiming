@@ -277,6 +277,33 @@
         </div>
       </div>
 
+      <!-- QR-Code für Bestenlisten-Einträge -->
+      <div class="settings-section">
+        <h3>Bestenliste · QR-Code</h3>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 10px">
+          Wenn ein Kart eine Top-8-Bestrunde fährt (Tag/Woche/Monat/Jahr), wird auf
+          dem Ausdruck statt des Logos ein QR-Code gedruckt. Kunden scannen und
+          tragen ihren Namen ein – der erscheint dann in der Bestenliste. Bei
+          ausgeschaltetem Feature (z.B. ngrok-Tunnel down) wird das Logo gedruckt.
+        </p>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>QR-Code aktiviert</label>
+            <select id="s-qr-enabled">
+              <option value="1">Ja</option>
+              <option value="0">Nein</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: span 2">
+            <label>Öffentliche Tunnel-URL (z.B. https://emslandring.ngrok-free.app)</label>
+            <input type="text" id="s-qr-base-url" placeholder="https://…">
+            <small style="color:var(--text-muted)">
+              Muss von Mobilfunk aus erreichbar sein. Ohne URL bleibt das Feature aus.
+            </small>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-section">
         <h3>Drucker</h3>
         <div class="settings-grid">

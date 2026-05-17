@@ -134,9 +134,18 @@ async def _gather_run_data(run_id: int) -> dict:
             "name": kart_names.get(knr) or cfg.get_kart_name(p["transponder_id"]),
             "class": (cfg.get_kart_info(p["transponder_id"]) or {}).get("class", ""),
             "laps": [], "first_ts_us": None,
+            "best_passing_id": None,
         })
         if p["lap_time_us"]:
             k["laps"].append(p["lap_time_us"])
+            # passing_id der schnellsten Runde merken – wird für den
+            # QR-Code-Token gebraucht (verlinkt auf genau diese Runde,
+            # damit der Customer-Name an der richtigen Stelle in der
+            # Bestenliste landet).
+            prev_best = k.get("_best_internal_us")
+            if prev_best is None or p["lap_time_us"] < prev_best:
+                k["_best_internal_us"] = p["lap_time_us"]
+                k["best_passing_id"] = p["id"]
         k["first_ts_us"] = (p["timestamp_us"] if k["first_ts_us"] is None
                             else min(k["first_ts_us"], p["timestamp_us"]))
     for k in karts.values():
@@ -184,11 +193,10 @@ async def _best_of(kart_class: str, since_dt: datetime, limit: int = 8) -> list[
     out = []
     for r in rows[:limit]:
         info = cfg.get_kart_info(r["transponder_id"]) or {}
-        # Lauf-spezifischer Kart-Name hat Priorität (z.B. "Bastian"
-        # wurde für genau diesen Lauf eingetragen). Wenn der Lauf
-        # keinen Override hatte → globaler Name aus der Konfiguration.
-        run_name = (r.get("run_kart_name") or "").strip()
-        display_name = run_name or info.get("name") or "Kart ?"
+        # Namens-Priorität: Customer-Claim > Lauf-Override > globaler Name.
+        claim_name = (r.get("claim_name") or "").strip()
+        run_name   = (r.get("run_kart_name") or "").strip()
+        display_name = claim_name or run_name or info.get("name") or "Kart ?"
         out.append({
             "pid": r.get("pid"),
             "transponder_id": r["transponder_id"],
@@ -197,8 +205,76 @@ async def _best_of(kart_class: str, since_dt: datetime, limit: int = 8) -> list[
             "lap_time_us": r["lap_time_us"],
             "run_date": r["run_date"],
             "run_started_at": r["run_started_at"],
+            # Für Admin-UI: Quelle des Namens (claim/run/global) +
+            # Claim-Status (zum Anzeigen des ✕-Buttons).
+            "name_source":   "claim" if claim_name else ("run" if run_name else "global"),
+            "claimed":       bool(claim_name),
         })
     return out
+
+
+_PERIOD_LABELS = {
+    "day":   "Tagesbestzeit",
+    "week":  "Wochenbestzeit",
+    "month": "Monatsbestzeit",
+    "year":  "Jahresbestzeit",
+}
+
+
+async def passing_top_positions(passing_id: int, kart_class: str | None = None,
+                                limit: int = 8) -> dict:
+    """Für jedes Periode (day/week/month/year): Platzierung dieses
+    Passings in der Bestenliste – oder ``None`` falls nicht in Top-``limit``.
+
+    Wenn ``kart_class`` nicht angegeben: wird aus dem Passing/Transponder
+    ermittelt.
+
+    Beispiel: ``{"day": 2, "week": 5, "month": None, "year": None,
+                 "best_period": "day", "best_pos": 2,
+                 "class": "Leihkart", "lap_time_us": 64281000}``
+
+    ``best_period`` / ``best_pos`` ist die "wichtigste" Platzierung
+    (kleinste Periode in der das Kart vorne ist) – nützlich für den
+    Hero-Spruch auf der Mobile-Seite ("Platz 2 der Tagesbestzeit").
+    """
+    import aiosqlite
+    async with aiosqlite.connect(database.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT transponder_id, lap_time_us FROM passings WHERE id = ?",
+            (passing_id,),
+        ) as cur:
+            r = await cur.fetchone()
+    if not r:
+        return {p: None for p in _PERIOD_LABELS}
+    row = dict(r)
+
+    tid = row["transponder_id"]
+    if kart_class is None:
+        info = cfg.get_kart_info(tid) or {}
+        kart_class = info.get("class")
+
+    result: dict = {p: None for p in _PERIOD_LABELS}
+    result["class"] = kart_class
+    result["lap_time_us"] = row["lap_time_us"]
+    result["best_period"] = None
+    result["best_pos"] = None
+    if not kart_class:
+        return result
+
+    ranges = _date_ranges()
+    # Reihenfolge wichtig: kleinste Periode zuerst – der erste Treffer
+    # ist auch die "wichtigste" Platzierung.
+    for period in ("day", "week", "month", "year"):
+        entries = await _best_of(kart_class, ranges[period], limit=limit)
+        for idx, e in enumerate(entries):
+            if e["pid"] == passing_id:
+                result[period] = idx + 1
+                if result["best_period"] is None:
+                    result["best_period"] = period
+                    result["best_pos"] = idx + 1
+                break
+    return result
 
 
 def _date_ranges(now: datetime | None = None) -> dict[str, datetime]:
@@ -415,9 +491,87 @@ def _chart_svg(laps: list[int], W: float, H: float) -> str:
 
 
 # ── Seiten-Renderer ──────────────────────────────────────────────────────
-def _header_elements(kart: dict, ranked: list, lo: dict, mode: str = "training") -> str:
-    """Kart-Nummer, Platzierung, Klasse (oder "GRAND PRIX"), Logo —
-    gemeinsam für beide Seiten."""
+def _make_qr_data_url(url: str) -> str:
+    """QR-Code als data:image/png;base64,... – embeddable in <img src>.
+
+    WeasyPrint hat bekannte Probleme mit file://-Pfaden die Sonderzeichen
+    enthalten (Pfad mit "ö" oder Leerzeichen → Bild wird nicht geladen).
+    Data-URLs umgehen das Problem komplett.
+    """
+    import segno, io, base64
+    qr = segno.make(url, error="M")
+    buf = io.BytesIO()
+    # scale=10 → 250×250 px (genug für ~3 cm Druck @ 200 dpi)
+    qr.save(buf, kind="png", scale=10, border=2, dark="#000000", light="#ffffff")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+async def _compute_qr_info(kart: dict) -> dict | None:
+    """Prüft ob die beste Runde des Karts in irgendeiner Top-8-Liste ist.
+    Wenn ja: Token holen/erzeugen + QR-Daten-URL. Wenn nein oder QR
+    Feature deaktiviert: None → Logo wie bisher.
+    """
+    c = cfg.get()
+    if not c.get("qr_enabled"):
+        return None
+    base_url = (c.get("qr_base_url") or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    best_pid = kart.get("best_passing_id")
+    if not best_pid:
+        return None
+    positions = await passing_top_positions(best_pid, kart_class=kart.get("class"))
+    if not any(positions.get(p) for p in ("day", "week", "month", "year")):
+        return None
+    token = await database.get_or_create_claim_token(best_pid)
+    url = f"{base_url}/record/{token}"
+    return {
+        "url": url,
+        "token": token,
+        "data_url": _make_qr_data_url(url),
+        "positions": positions,
+    }
+
+
+def _qr_overlay_elements(qr: dict, lo: dict) -> str:
+    """Rendert QR-Code + Spruch an Stelle des Logos."""
+    lx = lo.get("logo_x", 145)
+    ly = lo.get("logo_y", 9)
+    lw = lo.get("logo_w", 55)
+    lh = lo.get("logo_h", 41)
+    # Innerhalb des Logo-Bereichs: QR links, Spruch rechts daneben
+    qr_size = min(lh, 38)   # QR-Code-Quadrat, ~38mm passt in 41mm-Block
+    qr_x = lx
+    qr_y = ly + (lh - qr_size) / 2  # vertikal zentriert im Logo-Bereich
+    text_x = qr_x + qr_size + 2
+    text_w = lw - qr_size - 2
+    parts = []
+    parts.append(
+        f'<img src="{qr["data_url"]}" '
+        f'style="position:absolute;left:{qr_x}mm;top:{qr_y}mm;'
+        f'width:{qr_size}mm;height:{qr_size}mm;'
+        f'image-rendering:pixelated;">'
+    )
+    parts.append(
+        f'<div style="position:absolute;left:{text_x}mm;top:{ly}mm;'
+        f'width:{text_w}mm;height:{lh}mm;'
+        f'display:flex;flex-direction:column;justify-content:center;'
+        f'font-family:Lato,sans-serif;color:#111;line-height:1.15;">'
+        f'<div style="font-weight:900;font-size:9pt;letter-spacing:0.04em;'
+        f'color:#c62828;">🏆 GLÜCKWUNSCH!</div>'
+        f'<div style="font-weight:700;font-size:7.5pt;margin-top:1mm;">'
+        f'Du bist in der Bestenliste!</div>'
+        f'<div style="font-weight:400;font-size:6.5pt;margin-top:0.8mm;'
+        f'color:#444;">Scanne den Code, trag deinen Namen ein und verewige dich!</div>'
+        f'</div>'
+    )
+    return "".join(parts)
+
+
+def _header_elements(kart: dict, ranked: list, lo: dict, mode: str = "training",
+                    qr: dict | None = None) -> str:
+    """Kart-Nummer, Platzierung, Klasse (oder "GRAND PRIX"), Logo bzw.
+    QR-Code (wenn Bestrunde in Top-8) — gemeinsam für alle Seiten."""
     parts = []
     # Kart-Nummer (GeomGraphic Bold Italic)
     parts.append(e(lo["kart_num_x"], lo["kart_num_y"],
@@ -439,8 +593,10 @@ def _header_elements(kart: dict, ranked: list, lo: dict, mode: str = "training")
     parts.append(e(lo["pos_num_x"], lo["pos_num_y"],
                    f'{kart["position"]}.',
                    pt=lo["pos_num_pt"], w=700, italic=True, font="GeomGraphic"))
-    # Logo
-    if LOGO_PATH.exists():
+    # Logo ODER QR-Code (wenn Kart in Bestenliste qualifiziert)
+    if qr:
+        parts.append(_qr_overlay_elements(qr, lo))
+    elif LOGO_PATH.exists():
         lx, ly = lo.get("logo_x", 145), lo.get("logo_y", 9)
         lw, lh = lo.get("logo_w", 55),  lo.get("logo_h", 41)
         parts.append(
@@ -866,10 +1022,14 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
         for p in ("day", "week", "month", "year")
     }
 
+    # QR-Code-Info einmal pro Kart berechnen (gilt für alle Seiten).
+    # Wenn das Kart eine Top-8-Bestrunde hat: QR-URL erzeugen, sonst None.
+    qr_info = await _compute_qr_info(kart)
+
     pages = []
 
     # ── Seite 1 (Haupttemplate) ──────────────────────────────────────────
-    body  = _header_elements(kart, ranked, L, mode=run_mode)
+    body  = _header_elements(kart, ranked, L, mode=run_mode, qr=qr_info)
     body += _laps_elements(kart, L)
     body += _stats_elements(kart, L)
     body += _chart_element(kart, L)
@@ -887,7 +1047,7 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
     if not is_gp:
         for lap_from in range(MATRIX_MAX_LAPS, max_laps, MATRIX_MAX_LAPS):
             lap_to = min(max_laps, lap_from + MATRIX_MAX_LAPS)
-            body2  = _header_elements(kart, ranked, LO, mode=run_mode)
+            body2  = _header_elements(kart, ranked, LO, mode=run_mode, qr=qr_info)
             body2 += _matrix_element(ranked, lap_from, lap_to, LO)
             body2 += _footer_element(LO)
             pages.append(f'<div class="pg">{body2}</div>')
@@ -901,7 +1061,7 @@ async def _build_overlay_html(data: dict, kart: dict, sim_laps: int = 0) -> str:
     if own_count > OWN_LAPS_ON_P1:
         for lap_from in range(OWN_LAPS_ON_P1, own_count, OWN_LAPS_PER_PAGE):
             lap_to = min(own_count, lap_from + OWN_LAPS_PER_PAGE)
-            body3  = _header_elements(kart, ranked, LO, mode=run_mode)
+            body3  = _header_elements(kart, ranked, LO, mode=run_mode, qr=qr_info)
             body3 += _own_laps_overflow_elements(kart, lap_from, lap_to)
             body3 += _footer_element(LO)
             pages.append(f'<div class="pg">{body3}</div>')

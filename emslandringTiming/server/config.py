@@ -32,6 +32,16 @@ _DEFAULTS: dict = {
     "ampel_seq_done":             "off",
     "ampel_seq_disarm":           "off",
     "emulator_enabled":           True,
+    # QR-Code-Feature: Wenn ein Kart eine Top-8-Rekord-Runde fährt, wird
+    # im Ausdruck an Stelle des Logos ein QR-Code generiert. Kunde scannt,
+    # trägt seinen Namen ein → Name erscheint statt "Kart 12" in Bestenliste.
+    # ``qr_enabled`` kann gezielt abgeschaltet werden (z.B. wenn ngrok-Tunnel
+    # gerade nicht erreichbar ist – dann wird wieder das Logo gedruckt).
+    # ``qr_base_url`` ist die öffentliche URL des Tunnels (z.B.
+    # "https://emslandring.ngrok-free.app"). MUSS gesetzt sein damit
+    # Gäste auf Mobilfunk die URL erreichen können.
+    "qr_enabled":                 False,
+    "qr_base_url":                "",
     # Defekt-Erkennung pro Kart-Klasse: jede Klasse hat eigene Schwelle
     # und WMA-Fenstergröße. Wird nur im Transponder-Modal als
     # "Defekt-Verdacht"-Badge angezeigt (kein Live-Alert im Timing).

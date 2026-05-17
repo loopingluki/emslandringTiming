@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 import config as cfg
 import database
 import printer
+import profanity
 import run_manager
 from ampel import ampel
 from decoder import decoder
@@ -514,6 +515,92 @@ async def api_bestof(kart_class: str = "", period: str = "day"):
 @app.delete("/api/passing/{passing_id}")
 async def api_delete_passing(passing_id: int):
     await database.delete_passing(passing_id)
+    return {"ok": True}
+
+
+# ── Bestenlisten-Claims (QR-Code-Feature) ────────────────────────────────
+
+def _fmt_lap_for_humans(us: int | None) -> str:
+    """Mikrosekunden → "1:04.281" – für Mobile-Seite und API-Response."""
+    if not us:
+        return "—"
+    total_ms = us // 1000
+    m, rem = divmod(total_ms, 60_000)
+    s, ms  = divmod(rem, 1000)
+    return f"{m}:{s:02d}.{ms:03d}"
+
+
+@app.get("/record/{token}")
+async def record_page(token: str):
+    """Mobile-Seite die der Customer nach QR-Scan sieht."""
+    return FileResponse(WEB_TEMPLATES / "record.html")
+
+
+@app.get("/api/record/{token}")
+async def api_record_get(token: str):
+    """Daten für die Mobile-Seite: aktuelle Belegung, Platzierungen,
+    Lock-Status."""
+    claim = await database.get_claim_by_token(token)
+    if not claim:
+        raise HTTPException(404, "Diese Runde gibt es nicht oder sie wurde gelöscht.")
+    info = cfg.get_kart_info(claim["transponder_id"]) or {}
+    positions = await printer.passing_top_positions(claim["passing_id"],
+                                                   kart_class=info.get("class"))
+    in_any_topN = any(positions.get(p) for p in ("day","week","month","year"))
+    locked = False
+    if claim["claimed_at"]:
+        locked = (time.time() - claim["claimed_at"]) > 86400
+    return {
+        "token": token,
+        "name": claim["name"],
+        "kart_nr": claim["kart_nr"],
+        "kart_class": info.get("class"),
+        "global_name": info.get("name") or f"Kart {claim['kart_nr']}",
+        "lap_time_us": claim["lap_time_us"],
+        "lap_time_str": _fmt_lap_for_humans(claim["lap_time_us"]),
+        "run_name": claim["run_name"],
+        "run_date": claim["run_date"],
+        "positions": {p: positions.get(p) for p in ("day","week","month","year")},
+        "best_period": positions.get("best_period"),
+        "best_pos": positions.get("best_pos"),
+        "in_any_top": in_any_topN,
+        "locked": locked,
+        "claimed_at": claim["claimed_at"],
+    }
+
+
+@app.post("/api/record/{token}")
+async def api_record_post(token: str, body: dict):
+    """Customer trägt seinen Namen ein. Profanity-Check serverseitig."""
+    claim = await database.get_claim_by_token(token)
+    if not claim:
+        raise HTTPException(404, "Diese Runde gibt es nicht oder sie wurde gelöscht.")
+    # Lock-Check: 24h nach erstem Eintrag kein Update mehr
+    if claim["claimed_at"] and time.time() - claim["claimed_at"] > 86400:
+        raise HTTPException(403, "Diese Bestzeit ist gesperrt – Änderung nicht mehr möglich.")
+    # Prüfen ob Runde noch in irgendeiner Bestenliste ist
+    info = cfg.get_kart_info(claim["transponder_id"]) or {}
+    positions = await printer.passing_top_positions(claim["passing_id"],
+                                                   kart_class=info.get("class"))
+    if not any(positions.get(p) for p in ("day","week","month","year")):
+        raise HTTPException(
+            410,
+            "Diese Runde ist nicht mehr in der Bestenliste. Eintrag nicht mehr möglich.",
+        )
+    name = (body.get("name") or "").strip()
+    ok, msg = profanity.validate_name(name)
+    if not ok:
+        raise HTTPException(400, msg)
+    saved = await database.set_claim_name(token, name)
+    if not saved:
+        raise HTTPException(403, "Diese Bestzeit ist gesperrt – Änderung nicht mehr möglich.")
+    return {"ok": True, "name": name}
+
+
+@app.delete("/api/bestof/claim/{passing_id}")
+async def api_bestof_claim_delete(passing_id: int):
+    """Admin-Reset: Customer-Name löschen, Name fällt zurück auf Default."""
+    await database.delete_claim(passing_id)
     return {"ok": True}
 
 
