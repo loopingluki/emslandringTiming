@@ -400,6 +400,92 @@ async def get_best_laps_since(since_unix: float, transponder_ids: list[int] | No
     return result
 
 
+async def get_transponder_history_grouped(transponder_id: int) -> list[dict]:
+    """Fahrhistorie eines Transponders gruppiert nach Datum → Lauf → Runden.
+
+    Liefert eine Liste von Tagen (neueste zuerst), pro Tag eine Liste der
+    Läufe in denen das Kart gefahren ist, pro Lauf eine Liste der
+    gefahrenen Runden mit Rundenzeit. Erst-Passings (intro, ohne
+    lap_time_us) werden mitgeführt damit man sieht wann der Lauf startete.
+
+    Format:
+    [
+      {
+        "date": "2026-05-17",
+        "lap_count": 12,
+        "runs": [
+          {
+            "run_id": 238, "run_number": 3, "run_name": "Lauf 3",
+            "mode": "training", "started_at": 1715949000.0,
+            "laps": [
+              {"lap_nr": 1, "lap_time_us": 64281000, "timestamp_us": ...},
+              ...
+            ]
+          }, ...
+        ]
+      }, ...
+    ]
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT p.id          AS pid,
+                   p.run_id      AS run_id,
+                   p.lap_time_us AS lap_time_us,
+                   p.timestamp_us AS timestamp_us,
+                   r.date        AS run_date,
+                   r.run_number  AS run_number,
+                   r.name        AS run_name,
+                   r.mode        AS run_mode,
+                   r.started_at  AS started_at
+            FROM passings p
+            JOIN runs r ON r.id = p.run_id
+            WHERE p.transponder_id = ?
+            ORDER BY r.date DESC, r.run_number DESC, p.timestamp_us ASC
+            """,
+            (transponder_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    # Gruppieren: date → run_id → laps
+    days: dict[str, dict] = {}     # date_str → {date, lap_count, runs: {run_id: {...}}}
+    for r in rows:
+        d = r["run_date"]
+        day = days.setdefault(d, {"date": d, "lap_count": 0, "runs": {}})
+        rid = r["run_id"]
+        run = day["runs"].setdefault(rid, {
+            "run_id":     rid,
+            "run_number": r["run_number"],
+            "run_name":   r["run_name"],
+            "mode":       r["run_mode"],
+            "started_at": r["started_at"],
+            "laps":       [],
+        })
+        # Erst-Passing (Einführungsrunde) hat lap_time_us=None und wird hier
+        # weggelassen damit die Rundennummerierung später bei 1 startet.
+        if r["lap_time_us"] is not None:
+            run["laps"].append({
+                "lap_nr":       len(run["laps"]) + 1,
+                "lap_time_us":  r["lap_time_us"],
+                "timestamp_us": r["timestamp_us"],
+            })
+            day["lap_count"] += 1
+
+    # In Listen umwandeln (Datum DESC, innerhalb Tag run_number DESC)
+    result = []
+    for d in sorted(days.keys(), reverse=True):
+        day = days[d]
+        runs = sorted(day["runs"].values(),
+                      key=lambda x: x["run_number"], reverse=True)
+        result.append({
+            "date":      day["date"],
+            "lap_count": day["lap_count"],
+            "runs":      runs,
+        })
+    return result
+
+
 async def delete_passing(passing_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         # Claim hängt per FK an der Passing-ID – beim Löschen der Runde

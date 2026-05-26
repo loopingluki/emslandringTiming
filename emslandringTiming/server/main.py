@@ -611,6 +611,12 @@ async def api_transponder_history(transponder_id: int, days: int = 0):
     return await database.get_transponder_strength_history(transponder_id, since_unix=since)
 
 
+@app.get("/api/transponders/{transponder_id}/history-grouped")
+async def api_transponder_history_grouped(transponder_id: int):
+    """Fahrhistorie gruppiert nach Datum → Lauf → Runden (Reverse-Engineering)."""
+    return await database.get_transponder_history_grouped(transponder_id)
+
+
 @app.get("/api/transponders/{transponder_id}/lap-times")
 async def api_transponder_lap_times(transponder_id: int, limit: int = 50):
     """Letzte N Rundenzeiten (DESC, neueste zuerst). Den WMA über die

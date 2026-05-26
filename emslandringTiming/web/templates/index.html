@@ -668,6 +668,10 @@
           <button class="range-pill" data-days="365">1 Jahr</button>
           <button class="range-pill" data-days="730">2 Jahre</button>
         </div>
+        <div class="range-pills" id="td-zoom-pills" style="margin-left:6px">
+          <button class="range-pill active" data-zoom="detail" title="Y-Achse 100–200 (typische Signalwerte)">Detail</button>
+          <button class="range-pill" data-zoom="full" title="Y-Achse 0–255 (volle Range)">Voll</button>
+        </div>
       </div>
       <div style="position:relative">
         <canvas id="td-strength-chart" width="640" height="160"
@@ -687,6 +691,16 @@
         <span id="td-laps-warn" style="display:none;font-size:11px;font-weight:600;color:var(--red);background:var(--red-bg);padding:1px 6px;border-radius:3px">⚠ DEFEKT-VERDACHT</span>
       </div>
       <div id="td-laps-list" style="max-height:120px;overflow-y:auto;background:var(--bg);border-radius:4px;padding:6px;display:flex;flex-wrap:wrap;gap:4px;font-size:11px;font-variant-numeric:tabular-nums"></div>
+    </div>
+    <!-- Fahrhistorie: hierarchisch Datum → Lauf → Runden -->
+    <div style="margin-top:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <label style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim)">Fahrhistorie</label>
+        <span style="font-size:10px;color:var(--text-dim)" id="td-history-summary">–</span>
+      </div>
+      <div id="td-history-list" style="max-height:260px;overflow-y:auto;background:var(--bg);border-radius:4px;padding:6px;font-size:11px">
+        <span style="color:var(--text-muted)">Lade…</span>
+      </div>
     </div>
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-sm btn-red" id="td-delete">🗑 Löschen</button>

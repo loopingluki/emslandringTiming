@@ -1719,7 +1719,7 @@ async function openTransponderModal(transponder_id) {
   try {
     const hist = await fetch(`/api/transponders/${transponder_id}/history?days=0`).then(r => r.json());
     _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
-    drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
+    drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip', _tdChartZoom);
   } catch(_) {}
 
   // Letzte 50 Rundenzeiten + gleitende Durchschnitte laden
@@ -1730,6 +1730,92 @@ async function openTransponderModal(transponder_id) {
     document.getElementById('td-laps-list').innerHTML =
       '<span style="color:var(--text-muted)">Fehler beim Laden</span>';
   }
+
+  // Fahrhistorie laden (Datum → Lauf → Runden, Accordion-Stil)
+  const histEl = document.getElementById('td-history-list');
+  histEl.innerHTML = '<span style="color:var(--text-muted)">Lade…</span>';
+  try {
+    const grouped = await fetch(`/api/transponders/${transponder_id}/history-grouped`).then(r => r.json());
+    renderTransponderHistory(grouped);
+  } catch(_) {
+    histEl.innerHTML = '<span style="color:var(--text-muted)">Fehler beim Laden</span>';
+  }
+}
+
+// ── Fahrhistorie-Accordion: Datum → Lauf → Runden ──────────────────────────
+function renderTransponderHistory(days) {
+  const wrap = document.getElementById('td-history-list');
+  const summary = document.getElementById('td-history-summary');
+  if (!days || !days.length) {
+    wrap.innerHTML = '<span style="color:var(--text-muted)">Keine Fahrten vorhanden.</span>';
+    if (summary) summary.textContent = '';
+    return;
+  }
+  // Summary: Anzahl Tage / Läufe / Runden gesamt
+  const nLaps = days.reduce((sum, d) => sum + (d.lap_count || 0), 0);
+  const nRuns = days.reduce((sum, d) => sum + (d.runs ? d.runs.length : 0), 0);
+  if (summary) summary.textContent = `${days.length} Tag(e) · ${nRuns} Lauf/Läufe · ${nLaps} Runden`;
+
+  const modeLabel = (m) =>
+    m === 'gp_time'  ? 'GP Zeit'   :
+    m === 'gp_laps'  ? 'GP Runden' :
+    m === 'training' ? 'Training'  : (m || '');
+
+  const fmtDate = (s) => {
+    if (!s) return '–';
+    const [y,m,d] = s.split('-');
+    return `${d}.${m}.${y}`;
+  };
+
+  // Erstes Datum (= neuestes) ist standardmäßig offen, ältere zugeklappt.
+  wrap.innerHTML = days.map((day, di) => {
+    const dayOpen = di === 0;
+    const runsHtml = day.runs.map((run, ri) => {
+      const runOpen = di === 0 && ri === 0;   // erster Lauf des neuesten Tags offen
+      const lapsHtml = run.laps.map(l => {
+        return `<div style="display:flex;justify-content:space-between;padding:1px 8px;font-variant-numeric:tabular-nums">
+                  <span style="color:var(--text-dim)">${l.lap_nr}.</span>
+                  <span>${fmtTime(l.lap_time_us)}</span>
+                </div>`;
+      }).join('');
+      return `<div class="hist-run" style="margin-left:14px;border-left:1px solid var(--border);padding-left:8px">
+        <div class="hist-run-head" data-target="histrun-${day.date}-${run.run_id}"
+             style="cursor:pointer;padding:3px 0;display:flex;justify-content:space-between;align-items:center;gap:6px;user-select:none">
+          <span><span class="hist-caret">${runOpen ? '▼' : '▶'}</span>
+            ${run.run_name || ('Lauf ' + run.run_number)}
+            <span style="color:var(--text-dim);font-size:10px;margin-left:4px">${modeLabel(run.mode)}</span>
+          </span>
+          <span style="color:var(--text-dim);font-size:10px">${run.laps.length} Runden</span>
+        </div>
+        <div class="hist-run-body" id="histrun-${day.date}-${run.run_id}"
+             style="display:${runOpen ? 'block' : 'none'};padding:3px 0">${lapsHtml || '<span style="color:var(--text-muted);padding-left:8px">Keine gewerteten Runden</span>'}</div>
+      </div>`;
+    }).join('');
+    return `<div class="hist-day" style="margin-bottom:4px">
+      <div class="hist-day-head" data-target="histday-${day.date}"
+           style="cursor:pointer;padding:4px 4px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:var(--bg2);border-radius:3px;user-select:none">
+        <span><span class="hist-caret">${dayOpen ? '▼' : '▶'}</span>
+          <b style="margin-left:4px">${fmtDate(day.date)}</b>
+        </span>
+        <span style="color:var(--text-dim);font-size:10px">${day.runs.length} Lauf · ${day.lap_count} Runden</span>
+      </div>
+      <div class="hist-day-body" id="histday-${day.date}"
+           style="display:${dayOpen ? 'block' : 'none'};padding:4px 0">${runsHtml}</div>
+    </div>`;
+  }).join('');
+
+  // Klick-Toggles für Day- und Run-Köpfe
+  wrap.querySelectorAll('.hist-day-head, .hist-run-head').forEach(head => {
+    head.addEventListener('click', () => {
+      const id = head.dataset.target;
+      const body = document.getElementById(id);
+      if (!body) return;
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      const caret = head.querySelector('.hist-caret');
+      if (caret) caret.textContent = open ? '▶' : '▼';
+    });
+  });
 }
 
 function renderLapTimes(data, kart_class) {
@@ -1808,8 +1894,21 @@ function renderLapTimes(data, kart_class) {
 }
 
 let _tdChartData = [];
+let _tdChartZoom = 'detail';   // 'detail' (Y 100–200) | 'full' (Y 0–255)
 
 // Range pills – transponder modal
+// Zoom-Toggle (Y-Achse 100-200 / 0-255) – nur neu zeichnen, kein Fetch
+document.getElementById('td-zoom-pills').addEventListener('click', e => {
+  const pill = e.target.closest('.range-pill');
+  if (!pill) return;
+  document.querySelectorAll('#td-zoom-pills .range-pill').forEach(p => p.classList.remove('active'));
+  pill.classList.add('active');
+  _tdChartZoom = pill.dataset.zoom || 'detail';
+  if (_tdChartData && _tdChartData.length) {
+    drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip', _tdChartZoom);
+  }
+});
+
 document.getElementById('td-range-pills').addEventListener('click', async e => {
   const pill = e.target.closest('.range-pill');
   if (!pill || !_tdEditId) return;
@@ -2008,12 +2107,25 @@ function _bindChartHover(canvas, tooltip, data, xFn, yFn, labelFn) {
   canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
 }
 
-function drawStrengthChart(canvasId, data, tooltipId) {
+function drawStrengthChart(canvasId, data, tooltipId, zoom) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
+
+  // Y-Skala je nach Zoom-Modus.
+  // - "detail" (Default): 100-200 → typische Signalwerte gespreizt sichtbar.
+  //   Werte außerhalb dieses Bereichs werden geclippt.
+  // - "full": 0-255 → volle Byte-Range, alles sichtbar aber gestaucht.
+  const z = zoom || 'detail';
+  const yMin = z === 'full' ? 0   : 100;
+  const yMax = z === 'full' ? 255 : 200;
+  const yRng = yMax - yMin;
+  const ticks = z === 'full'
+    ? [0, 50, 100, 150, 200]
+    : [100, 125, 150, 175, 200];
+  const mapY = (v) => h - Math.max(0, Math.min(1, (v - yMin) / yRng)) * h;
 
   const values = data.map(d => typeof d === 'object' ? d.strength : d);
 
@@ -2028,21 +2140,21 @@ function drawStrengthChart(canvasId, data, tooltipId) {
     ctx.save();
     ctx.globalAlpha = 0.35;
     ctx.strokeStyle = c.grid; ctx.lineWidth = 0.75;
-    [[50,'50'],[100,'100'],[150,'150'],[200,'200']].forEach(([v, label]) => {
-      const y = h - (v / 255) * h;
+    ticks.forEach(v => {
+      const y = mapY(v);
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     });
     ctx.restore();
     ctx.fillStyle = c.dim; ctx.font = '9px monospace';
-    [[50,'50'],[100,'100'],[150,'150'],[200,'200']].forEach(([v, label]) => {
-      const y = h - (v / 255) * h;
-      ctx.fillText(label, 2, y - 2);
+    ticks.forEach(v => {
+      const y = mapY(v);
+      ctx.fillText(String(v), 2, y - 2);
     });
     // Curve
     ctx.beginPath(); ctx.strokeStyle = c.green; ctx.lineWidth = 1.75;
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     values.forEach((v, i) => {
-      const x = i * step, y = h - (Math.min(v, 255) / 255) * h;
+      const x = i * step, y = mapY(v);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
     ctx.stroke();
