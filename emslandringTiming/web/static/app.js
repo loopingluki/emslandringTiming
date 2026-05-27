@@ -173,7 +173,8 @@ function handleMsg(msg) {
       // Defekt-Konfig vom Server holen damit Transponder-Modal sie nutzen kann
       fetch('/api/settings').then(r => r.json()).then(s => {
         state.settings = state.settings || {};
-        state.settings.defect_categories = s.defect_categories || {};
+        state.settings.defect_categories        = s.defect_categories        || {};
+        state.settings.signal_defect_categories = s.signal_defect_categories || {};
       }).catch(() => {});
       if (msg.runs_today) {
         state.runs = msg.runs_today;
@@ -1437,6 +1438,66 @@ function _captureDefectCategoryFields() {
   };
 }
 
+// ── Signal-Defekt-Erkennung Settings (analog Defekt-Erkennung) ─────────────
+let _sigdefCategoriesEdit = {};
+let _sigdefActiveClass = null;
+const _SIGDEF_DEFAULTS = {
+  enabled: false, window: 50, baseline_window: 100,
+  stddev_warn_factor: 1.5, stddev_alert_factor: 2.0,
+  slope_warn: -0.05, slope_alert: -0.10,
+  min_drop_warn: 15, min_drop_alert: 30,
+};
+
+function _renderSigdefPills(classes) {
+  const div = document.getElementById('s-sigdef-pills');
+  if (!div) return;
+  div.innerHTML = classes.map(c =>
+    `<button type="button" class="range-pill ${c.name === _sigdefActiveClass ? 'active' : ''}"
+             data-class="${c.name}">${c.name}</button>`
+  ).join('');
+  div.querySelectorAll('.range-pill').forEach(b => {
+    b.addEventListener('click', () => {
+      _captureSigdefCategoryFields();
+      _sigdefActiveClass = b.dataset.class;
+      div.querySelectorAll('.range-pill').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      _showSigdefCategoryFields();
+    });
+  });
+}
+
+function _showSigdefCategoryFields() {
+  const cls = _sigdefActiveClass;
+  if (!cls) return;
+  const cat = _sigdefCategoriesEdit[cls] ||
+    (_sigdefCategoriesEdit[cls] = { ..._SIGDEF_DEFAULTS });
+  document.getElementById('s-sigdef-cat-enabled').value      = cat.enabled ? '1' : '0';
+  document.getElementById('s-sigdef-cat-window').value       = cat.window;
+  document.getElementById('s-sigdef-cat-baseline').value     = cat.baseline_window;
+  document.getElementById('s-sigdef-cat-stddev-warn').value  = cat.stddev_warn_factor;
+  document.getElementById('s-sigdef-cat-stddev-alert').value = cat.stddev_alert_factor;
+  document.getElementById('s-sigdef-cat-slope-warn').value   = cat.slope_warn;
+  document.getElementById('s-sigdef-cat-slope-alert').value  = cat.slope_alert;
+  document.getElementById('s-sigdef-cat-min-warn').value     = cat.min_drop_warn;
+  document.getElementById('s-sigdef-cat-min-alert').value    = cat.min_drop_alert;
+}
+
+function _captureSigdefCategoryFields() {
+  const cls = _sigdefActiveClass;
+  if (!cls) return;
+  _sigdefCategoriesEdit[cls] = {
+    enabled:             document.getElementById('s-sigdef-cat-enabled').value === '1',
+    window:             +document.getElementById('s-sigdef-cat-window').value       || _SIGDEF_DEFAULTS.window,
+    baseline_window:    +document.getElementById('s-sigdef-cat-baseline').value     || _SIGDEF_DEFAULTS.baseline_window,
+    stddev_warn_factor: +document.getElementById('s-sigdef-cat-stddev-warn').value  || _SIGDEF_DEFAULTS.stddev_warn_factor,
+    stddev_alert_factor:+document.getElementById('s-sigdef-cat-stddev-alert').value || _SIGDEF_DEFAULTS.stddev_alert_factor,
+    slope_warn:         +document.getElementById('s-sigdef-cat-slope-warn').value   || _SIGDEF_DEFAULTS.slope_warn,
+    slope_alert:        +document.getElementById('s-sigdef-cat-slope-alert').value  || _SIGDEF_DEFAULTS.slope_alert,
+    min_drop_warn:      +document.getElementById('s-sigdef-cat-min-warn').value     || _SIGDEF_DEFAULTS.min_drop_warn,
+    min_drop_alert:     +document.getElementById('s-sigdef-cat-min-alert').value    || _SIGDEF_DEFAULTS.min_drop_alert,
+  };
+}
+
 async function loadSettings() {
   const s = await fetch('/api/settings').then(r => r.json());
   document.getElementById('s-runs-per-day').value = s.runs_per_day;
@@ -1483,9 +1544,20 @@ async function loadSettings() {
   _renderDefectPills(s.classes || []);
   _showDefectCategoryFields();
 
+  // Signal-Defekt-Erkennung pro Klasse (analog zur normalen Defekt-Erkennung)
+  const sigCats = JSON.parse(JSON.stringify(s.signal_defect_categories || {}));
+  for (const c of (s.classes || [])) {
+    if (!sigCats[c.name]) sigCats[c.name] = { ..._SIGDEF_DEFAULTS };
+  }
+  _sigdefCategoriesEdit = sigCats;
+  _sigdefActiveClass = (s.classes || [])[0]?.name || null;
+  _renderSigdefPills(s.classes || []);
+  _showSigdefCategoryFields();
+
   // In state.settings cachen damit Transponder-Modal Bescheid weiß
   state.settings = state.settings || {};
-  state.settings.defect_categories = s.defect_categories || {};
+  state.settings.defect_categories        = s.defect_categories        || {};
+  state.settings.signal_defect_categories = s.signal_defect_categories || {};
   document.getElementById('s-decoder-ip').value  = s.decoder_ip;
   document.getElementById('s-decoder-port').value= s.decoder_port;
   document.getElementById('s-http-port').value   = s.http_port;
@@ -1630,14 +1702,19 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
   // Aktuell sichtbare Defekt-Kategorie ins Buffer übernehmen, dann ALLE
   // Kategorien mit speichern (Pill-Wechsel hat sie schon vorher geflusht).
   _captureDefectCategoryFields();
-  body.defect_categories = _defectCategoriesEdit;
+  _captureSigdefCategoryFields();
+  body.defect_categories        = _defectCategoriesEdit;
+  body.signal_defect_categories = _sigdefCategoriesEdit;
   await fetch('/api/settings', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body),
   });
   // Cache aktualisieren damit Transponder-Modal die neue Konfig nutzt
   state.settings = state.settings || {};
-  state.settings.defect_categories = JSON.parse(JSON.stringify(_defectCategoriesEdit));
+  state.settings.defect_categories        = JSON.parse(JSON.stringify(_defectCategoriesEdit));
+  state.settings.signal_defect_categories = JSON.parse(JSON.stringify(_sigdefCategoriesEdit));
+  // Falls Transponder-Modal offen ist → sofort neu zeichnen mit neuen Schwellwerten
+  if (_tdChartData && _tdChartData.length) _redrawTdChart();
   const saved = document.getElementById('settings-saved');
   saved.style.display = '';
   setTimeout(() => saved.style.display = 'none', 2000);
@@ -1716,10 +1793,11 @@ async function openTransponderModal(transponder_id) {
 
   showModal('modal-transponder');
 
+  _tdKartClass = t.class;
   try {
     const hist = await fetch(`/api/transponders/${transponder_id}/history?days=0`).then(r => r.json());
     _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
-    drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip', _tdChartZoom);
+    _redrawTdChart();
   } catch(_) {}
 
   // Letzte 50 Rundenzeiten + gleitende Durchschnitte laden
@@ -1895,8 +1973,59 @@ function renderLapTimes(data, kart_class) {
 
 let _tdChartData = [];
 let _tdChartZoom = 'detail';   // 'detail' (Y 100–200) | 'full' (Y 0–255)
+let _tdKartClass = null;       // Klasse des aktuell offenen Transponders
 
 // Range pills – transponder modal
+// Zentrale Funktion: Chart + Status neu zeichnen für aktuellen Transponder.
+// Wird aufgerufen bei Daten-Fetch, Zoom-Wechsel, Settings-Änderung.
+function _redrawTdChart() {
+  if (!_tdChartData || !_tdChartData.length) {
+    drawStrengthChart('td-strength-chart', _tdChartData || [], 'td-chart-tooltip', _tdChartZoom);
+    document.getElementById('td-signal-status').style.display = 'none';
+    return;
+  }
+  // Signal-Analyse mit aktuellen Settings holen
+  const sigCats = (state.settings || {}).signal_defect_categories || {};
+  const sigCfg  = _tdKartClass ? sigCats[_tdKartClass] : null;
+  const values  = _tdChartData.map(d => typeof d === 'object' ? d.strength : d);
+  const analysis = analyzeSignal(values, sigCfg);
+
+  drawStrengthChart('td-strength-chart', _tdChartData,
+    'td-chart-tooltip', _tdChartZoom,
+    analysis ? analysis.statuses : null);
+
+  // Status-Badge aktualisieren
+  const badge = document.getElementById('td-signal-status');
+  if (!sigCfg || !sigCfg.enabled) {
+    badge.style.display = 'none';
+    return;
+  }
+  if (!analysis || !analysis.hasData) {
+    badge.style.display = '';
+    badge.style.background = 'var(--bg2)';
+    badge.style.color = 'var(--text-dim)';
+    badge.innerHTML = `<b>Signal-Analyse:</b> noch nicht genug Datenpunkte für eine Bewertung (mindestens ${(sigCfg.baseline_window||100) + (sigCfg.window||50)} nötig).`;
+    return;
+  }
+  const labels = ['STABIL', 'INSTABIL', 'DEFEKT-VERDACHT'];
+  const colors = [
+    {bg:'rgba(63,185,80,.12)',  fg:'var(--green)'},
+    {bg:'rgba(210,153,34,.15)', fg:'var(--yellow)'},
+    {bg:'rgba(248,81,73,.15)',  fg:'var(--red)'},
+  ];
+  const c = colors[analysis.current];
+  const d = analysis.details || {};
+  badge.style.display = '';
+  badge.style.background = c.bg;
+  badge.style.color = c.fg;
+  const fmt = (n, p=2) => n == null ? '—' : (+n).toFixed(p);
+  badge.innerHTML =
+    `<b>Signal: ${labels[analysis.current]}</b> ` +
+    `&nbsp;·&nbsp; Stddev: ${fmt(d.rStddev)} (Baseline ${fmt(d.baseStddev)})` +
+    `&nbsp;·&nbsp; Slope: ${fmt(d.rSlope, 3)}` +
+    `&nbsp;·&nbsp; Min-Drop: ${fmt(d.drop, 0)} (Baseline-Min ${fmt(d.baseMin, 0)})`;
+}
+
 // Zoom-Toggle (Y-Achse 100-200 / 0-255) – nur neu zeichnen, kein Fetch
 document.getElementById('td-zoom-pills').addEventListener('click', e => {
   const pill = e.target.closest('.range-pill');
@@ -1904,9 +2033,7 @@ document.getElementById('td-zoom-pills').addEventListener('click', e => {
   document.querySelectorAll('#td-zoom-pills .range-pill').forEach(p => p.classList.remove('active'));
   pill.classList.add('active');
   _tdChartZoom = pill.dataset.zoom || 'detail';
-  if (_tdChartData && _tdChartData.length) {
-    drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip', _tdChartZoom);
-  }
+  _redrawTdChart();
 });
 
 document.getElementById('td-range-pills').addEventListener('click', async e => {
@@ -1917,7 +2044,7 @@ document.getElementById('td-range-pills').addEventListener('click', async e => {
   _tdDays = +pill.dataset.days;
   const hist = await fetch(`/api/transponders/${_tdEditId}/history?days=${_tdDays}`).then(r => r.json());
   _tdChartData = hist.map(h => ({ strength: h.strength, ts: h.timestamp_us ? h.timestamp_us / 1_000_000 : null })).reverse();
-  drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
+  _redrawTdChart();
 });
 
 // Range pills – health chart
@@ -2071,6 +2198,100 @@ function _themeColors() {
   };
 }
 
+// ── Signal-Defekt-Analyse (Rolling) ────────────────────────────────────────
+// Liefert pro Datenpunkt einen Status 0/1/2 (grün/gelb/rot) basierend auf
+// drei Indikatoren: Stddev-Wachstum, negativer Trend, Min-Drop.
+// Wird gegen die Baseline (erste N Punkte) verglichen, damit auch ein
+// Transponder analysiert werden kann, der schon immer schwächeres Signal
+// hatte – wir interessieren uns für die *Veränderung*, nicht den Absolutwert.
+function _stddev(arr) {
+  if (!arr.length) return 0;
+  const m = arr.reduce((a,b) => a+b, 0) / arr.length;
+  const v = arr.reduce((a,b) => a + (b-m)*(b-m), 0) / arr.length;
+  return Math.sqrt(v);
+}
+function _slope(arr) {
+  // Linear-Regression Slope über Index 0..n-1
+  const n = arr.length;
+  if (n < 2) return 0;
+  const mx = (n-1) / 2;
+  const my = arr.reduce((a,b)=>a+b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - mx) * (arr[i] - my);
+    den += (i - mx) * (i - mx);
+  }
+  return den === 0 ? 0 : num / den;
+}
+
+function analyzeSignal(values, settings) {
+  // values: Array von Strength-Werten (älteste zuerst, wie im Chart).
+  // settings: signal_defect_categories[kart_class] – kann undefined sein
+  //   wenn Feature für diese Klasse aus.
+  if (!values || !values.length) return null;
+  if (!settings || !settings.enabled) return null;
+
+  const window         = Math.max(5, +settings.window         || 50);
+  const baselineWindow = Math.max(10, +settings.baseline_window || 100);
+  const sWarn  = +settings.stddev_warn_factor  || 1.5;
+  const sAlert = +settings.stddev_alert_factor || 2.0;
+  const slWarn  = +settings.slope_warn  || -0.05;
+  const slAlert = +settings.slope_alert || -0.10;
+  const mWarn  = +settings.min_drop_warn  || 15;
+  const mAlert = +settings.min_drop_alert || 30;
+
+  const n = values.length;
+  if (n < baselineWindow + 1) {
+    // Zu wenig Daten für Baseline – alle Punkte als grün ausgeben.
+    return { statuses: new Array(n).fill(0), current: 0, hasData: false };
+  }
+
+  // Baseline aus den ersten ``baseline_window`` Datenpunkten
+  const baseline = values.slice(0, baselineWindow);
+  const baseStddev = _stddev(baseline);
+  const baseMin    = Math.min(...baseline);
+
+  const statuses = new Array(n).fill(0);
+  let lastDetails = null;
+  for (let i = 0; i < n; i++) {
+    // Auch die Baseline-Region kriegt grün (das ist die Referenz).
+    if (i < baselineWindow + window) { statuses[i] = 0; continue; }
+    const recent = values.slice(i - window + 1, i + 1);
+    const rStddev = _stddev(recent);
+    const rMin    = Math.min(...recent);
+    const rSlope  = _slope(recent);
+
+    // Drei Einzel-Status
+    let sStddev = 0;
+    if (baseStddev > 0) {
+      if (rStddev > baseStddev * sAlert) sStddev = 2;
+      else if (rStddev > baseStddev * sWarn) sStddev = 1;
+    }
+    let sSlope = 0;
+    if (rSlope < slAlert) sSlope = 2;
+    else if (rSlope < slWarn) sSlope = 1;
+
+    let sMin = 0;
+    const drop = baseMin - rMin;
+    if (drop > mAlert) sMin = 2;
+    else if (drop > mWarn) sMin = 1;
+
+    statuses[i] = Math.max(sStddev, sSlope, sMin);
+    lastDetails = {
+      rStddev, baseStddev, rSlope, rMin, baseMin, drop,
+      sStddev, sSlope, sMin,
+    };
+  }
+
+  return {
+    statuses,
+    current: statuses[n-1] || 0,
+    details: lastDetails,
+    hasData: true,
+    baseline: { stddev: baseStddev, min: baseMin },
+  };
+}
+
 function drawSparkline(canvasId, values) {
   const canvas = document.getElementById(canvasId);
   if (!canvas || !values.length) return;
@@ -2107,7 +2328,7 @@ function _bindChartHover(canvas, tooltip, data, xFn, yFn, labelFn) {
   canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
 }
 
-function drawStrengthChart(canvasId, data, tooltipId, zoom) {
+function drawStrengthChart(canvasId, data, tooltipId, zoom, statuses) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -2150,14 +2371,58 @@ function drawStrengthChart(canvasId, data, tooltipId, zoom) {
       const y = mapY(v);
       ctx.fillText(String(v), 2, y - 2);
     });
-    // Curve
-    ctx.beginPath(); ctx.strokeStyle = c.green; ctx.lineWidth = 1.75;
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    values.forEach((v, i) => {
-      const x = i * step, y = mapY(v);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+
+    // Statusband-Hintergrund (gelb/rot Felder) – damit die kritischen
+    // Bereiche schon mit Peripherie-Blick erkennbar sind.
+    if (statuses && statuses.length === values.length) {
+      ctx.save();
+      ctx.globalAlpha = 0.10;
+      let runStart = 0, runStatus = statuses[0];
+      for (let i = 1; i <= statuses.length; i++) {
+        const s = i < statuses.length ? statuses[i] : -1;
+        if (s !== runStatus) {
+          if (runStatus > 0) {
+            const x0 = runStart * step;
+            const x1 = (i - 1) * step;
+            ctx.fillStyle = runStatus === 2 ? c.red : c.yellow;
+            ctx.fillRect(x0, 0, Math.max(1, x1 - x0), h);
+          }
+          runStart = i;
+          runStatus = s;
+        }
+      }
+      ctx.restore();
+    }
+
+    // Kurve – Segment-weise gezeichnet damit jedes Segment seine eigene
+    // Farbe je nach Status haben kann.
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 1.75;
+    const colorFor = (s) => (s === 2 ? c.red : s === 1 ? c.yellow : c.green);
+    if (statuses && statuses.length === values.length) {
+      // Pro Statuswechsel ein neuer Pfad mit passender Farbe.
+      let i = 0;
+      while (i < values.length - 1) {
+        const s = statuses[i + 1];   // Segment i→i+1 bekommt Farbe des Zielpunkts
+        let j = i + 1;
+        while (j < values.length - 1 && statuses[j + 1] === s) j++;
+        ctx.beginPath();
+        ctx.strokeStyle = colorFor(s);
+        ctx.moveTo(i * step, mapY(values[i]));
+        for (let k = i + 1; k <= j; k++) {
+          ctx.lineTo(k * step, mapY(values[k]));
+        }
+        ctx.stroke();
+        i = j;
+      }
+    } else {
+      // Kein Status → komplett grün wie früher
+      ctx.beginPath(); ctx.strokeStyle = c.green;
+      values.forEach((v, i) => {
+        const x = i * step, y = mapY(v);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
   }
 
   if (tooltipId) {
@@ -2427,7 +2692,7 @@ function applyTheme(theme) {
   // Canvas-Charts mit neuen Theme-Farben neu zeichnen
   try {
     if (_healthChartData && _healthChartData.length) drawHealthChart(_healthChartData);
-    if (_tdChartData && _tdChartData.length) drawStrengthChart('td-strength-chart', _tdChartData, 'td-chart-tooltip');
+    if (_tdChartData && _tdChartData.length) _redrawTdChart();
   } catch(_) {}
 }
 
