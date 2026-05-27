@@ -1446,6 +1446,7 @@ const _SIGDEF_DEFAULTS = {
   stddev_warn_factor: 1.5, stddev_alert_factor: 2.0,
   slope_warn: -0.05, slope_alert: -0.10,
   min_drop_warn: 15, min_drop_alert: 30,
+  mean_drop_warn: 10, mean_drop_alert: 20,
 };
 
 function _renderSigdefPills(classes) {
@@ -1480,21 +1481,31 @@ function _showSigdefCategoryFields() {
   document.getElementById('s-sigdef-cat-slope-alert').value  = cat.slope_alert;
   document.getElementById('s-sigdef-cat-min-warn').value     = cat.min_drop_warn;
   document.getElementById('s-sigdef-cat-min-alert').value    = cat.min_drop_alert;
+  document.getElementById('s-sigdef-cat-mean-warn').value    = cat.mean_drop_warn ?? 10;
+  document.getElementById('s-sigdef-cat-mean-alert').value   = cat.mean_drop_alert ?? 20;
 }
 
 function _captureSigdefCategoryFields() {
   const cls = _sigdefActiveClass;
   if (!cls) return;
+  // ‖x‖ ?? d : nicht || (sonst würde 0 z.B. zum Default wechseln, was bei
+  // Slope/Drop-Werten manchmal gewollt ist).
+  const num = (id, def) => {
+    const v = document.getElementById(id).value;
+    return v === '' || v == null ? def : +v;
+  };
   _sigdefCategoriesEdit[cls] = {
     enabled:             document.getElementById('s-sigdef-cat-enabled').value === '1',
-    window:             +document.getElementById('s-sigdef-cat-window').value       || _SIGDEF_DEFAULTS.window,
-    baseline_window:    +document.getElementById('s-sigdef-cat-baseline').value     || _SIGDEF_DEFAULTS.baseline_window,
-    stddev_warn_factor: +document.getElementById('s-sigdef-cat-stddev-warn').value  || _SIGDEF_DEFAULTS.stddev_warn_factor,
-    stddev_alert_factor:+document.getElementById('s-sigdef-cat-stddev-alert').value || _SIGDEF_DEFAULTS.stddev_alert_factor,
-    slope_warn:         +document.getElementById('s-sigdef-cat-slope-warn').value   || _SIGDEF_DEFAULTS.slope_warn,
-    slope_alert:        +document.getElementById('s-sigdef-cat-slope-alert').value  || _SIGDEF_DEFAULTS.slope_alert,
-    min_drop_warn:      +document.getElementById('s-sigdef-cat-min-warn').value     || _SIGDEF_DEFAULTS.min_drop_warn,
-    min_drop_alert:     +document.getElementById('s-sigdef-cat-min-alert').value    || _SIGDEF_DEFAULTS.min_drop_alert,
+    window:              num('s-sigdef-cat-window',       _SIGDEF_DEFAULTS.window),
+    baseline_window:     num('s-sigdef-cat-baseline',     _SIGDEF_DEFAULTS.baseline_window),
+    stddev_warn_factor:  num('s-sigdef-cat-stddev-warn',  _SIGDEF_DEFAULTS.stddev_warn_factor),
+    stddev_alert_factor: num('s-sigdef-cat-stddev-alert', _SIGDEF_DEFAULTS.stddev_alert_factor),
+    slope_warn:          num('s-sigdef-cat-slope-warn',   _SIGDEF_DEFAULTS.slope_warn),
+    slope_alert:         num('s-sigdef-cat-slope-alert',  _SIGDEF_DEFAULTS.slope_alert),
+    min_drop_warn:       num('s-sigdef-cat-min-warn',     _SIGDEF_DEFAULTS.min_drop_warn),
+    min_drop_alert:      num('s-sigdef-cat-min-alert',    _SIGDEF_DEFAULTS.min_drop_alert),
+    mean_drop_warn:      num('s-sigdef-cat-mean-warn',    _SIGDEF_DEFAULTS.mean_drop_warn),
+    mean_drop_alert:     num('s-sigdef-cat-mean-alert',   _SIGDEF_DEFAULTS.mean_drop_alert),
   };
 }
 
@@ -1984,11 +1995,14 @@ function _redrawTdChart() {
     document.getElementById('td-signal-status').style.display = 'none';
     return;
   }
-  // Signal-Analyse mit aktuellen Settings holen
+  // Signal-Analyse mit aktuellen Settings holen.
+  // Timestamps parallel zu Werten extrahieren – braucht's für die
+  // Baseline-Herkunfts-Anzeige im Status-Badge.
   const sigCats = (state.settings || {}).signal_defect_categories || {};
   const sigCfg  = _tdKartClass ? sigCats[_tdKartClass] : null;
   const values  = _tdChartData.map(d => typeof d === 'object' ? d.strength : d);
-  const analysis = analyzeSignal(values, sigCfg);
+  const tss     = _tdChartData.map(d => typeof d === 'object' ? d.ts : null);
+  const analysis = analyzeSignal(values, sigCfg, tss);
 
   drawStrengthChart('td-strength-chart', _tdChartData,
     'td-chart-tooltip', _tdChartZoom,
@@ -2004,7 +2018,7 @@ function _redrawTdChart() {
     badge.style.display = '';
     badge.style.background = 'var(--bg2)';
     badge.style.color = 'var(--text-dim)';
-    badge.innerHTML = `<b>Signal-Analyse:</b> noch nicht genug Datenpunkte für eine Bewertung (mindestens ${(sigCfg.baseline_window||100) + (sigCfg.window||50)} nötig).`;
+    badge.innerHTML = `<b>Transponder-Analyse:</b> noch nicht genug Datenpunkte für eine Bewertung (mindestens ${(sigCfg.baseline_window||100) + (sigCfg.window||50)} nötig, aktuell ${values.length}).`;
     return;
   }
   const labels = ['STABIL', 'INSTABIL', 'DEFEKT-VERDACHT'];
@@ -2015,15 +2029,42 @@ function _redrawTdChart() {
   ];
   const c = colors[analysis.current];
   const d = analysis.details || {};
+  const b = analysis.baseline || {};
   badge.style.display = '';
   badge.style.background = c.bg;
   badge.style.color = c.fg;
   const fmt = (n, p=2) => n == null ? '—' : (+n).toFixed(p);
+
+  // Baseline-Herkunft formatieren
+  let baseInfo = `Baseline: Punkt 1–${b.window || '?'}`;
+  if (b.ts_start && b.ts_end) {
+    const fmtDate = (ts) => {
+      const d = new Date(ts * 1000);
+      return d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit'});
+    };
+    const ageDays = Math.floor((Date.now()/1000 - b.ts_end) / 86400);
+    const ageStr = ageDays < 1 ? 'heute'
+                 : ageDays < 7 ? `vor ${ageDays} Tag${ageDays>1?'en':''}`
+                 : ageDays < 60 ? `vor ${Math.round(ageDays/7)} Wochen`
+                 : ageDays < 365 ? `vor ${Math.round(ageDays/30)} Monaten`
+                 : `vor ${(ageDays/365).toFixed(1)} Jahren`;
+    baseInfo = `Baseline: ${fmtDate(b.ts_start)}–${fmtDate(b.ts_end)} (${ageStr})`;
+  }
+
+  // Indikator-Helfer: kleines Status-Symbol pro Indikator
+  const sym = (s) => s === 2 ? '🔴' : s === 1 ? '🟡' : '🟢';
+
   badge.innerHTML =
-    `<b>Signal: ${labels[analysis.current]}</b> ` +
-    `&nbsp;·&nbsp; Stddev: ${fmt(d.rStddev)} (Baseline ${fmt(d.baseStddev)})` +
-    `&nbsp;·&nbsp; Slope: ${fmt(d.rSlope, 3)}` +
-    `&nbsp;·&nbsp; Min-Drop: ${fmt(d.drop, 0)} (Baseline-Min ${fmt(d.baseMin, 0)})`;
+    `<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">` +
+      `<b>Transponder: ${labels[analysis.current]}</b>` +
+      `<span style="font-size:10px;color:var(--text-dim);font-weight:normal">${baseInfo}</span>` +
+    `</div>` +
+    `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);line-height:1.6">` +
+      `${sym(d.sStddev)} <b>Stddev:</b> ${fmt(d.rStddev)} (Baseline ${fmt(d.baseStddev)})` +
+      ` &nbsp;·&nbsp; ${sym(d.sSlope)} <b>Slope:</b> ${fmt(d.rSlope, 3)}` +
+      ` &nbsp;·&nbsp; ${sym(d.sMin)} <b>Min-Drop:</b> ${fmt(d.drop, 0)} (Baseline-Min ${fmt(d.baseMin, 0)})` +
+      ` &nbsp;·&nbsp; ${sym(d.sMean)} <b>Mean-Drop:</b> ${fmt(d.meanDrop, 1)} (Baseline-Ø ${fmt(d.baseMean, 0)} → aktuell ${fmt(d.rMean, 0)})` +
+    `</div>`;
 }
 
 // Zoom-Toggle (Y-Achse 100-200 / 0-255) – nur neu zeichnen, kein Fetch
@@ -2224,10 +2265,16 @@ function _slope(arr) {
   return den === 0 ? 0 : num / den;
 }
 
-function analyzeSignal(values, settings) {
+function _mean(arr) {
+  return arr.length ? arr.reduce((a,b)=>a+b, 0) / arr.length : 0;
+}
+
+function analyzeSignal(values, settings, timestamps) {
   // values: Array von Strength-Werten (älteste zuerst, wie im Chart).
   // settings: signal_defect_categories[kart_class] – kann undefined sein
   //   wenn Feature für diese Klasse aus.
+  // timestamps: optional Array (Unix-Sekunden) parallel zu values – wird
+  //   nur für die Baseline-Herkunft-Anzeige genutzt.
   if (!values || !values.length) return null;
   if (!settings || !settings.enabled) return null;
 
@@ -2239,10 +2286,11 @@ function analyzeSignal(values, settings) {
   const slAlert = +settings.slope_alert || -0.10;
   const mWarn  = +settings.min_drop_warn  || 15;
   const mAlert = +settings.min_drop_alert || 30;
+  const meanWarn  = +settings.mean_drop_warn  || 10;
+  const meanAlert = +settings.mean_drop_alert || 20;
 
   const n = values.length;
   if (n < baselineWindow + 1) {
-    // Zu wenig Daten für Baseline – alle Punkte als grün ausgeben.
     return { statuses: new Array(n).fill(0), current: 0, hasData: false };
   }
 
@@ -2250,18 +2298,25 @@ function analyzeSignal(values, settings) {
   const baseline = values.slice(0, baselineWindow);
   const baseStddev = _stddev(baseline);
   const baseMin    = Math.min(...baseline);
+  const baseMean   = _mean(baseline);
+
+  // Baseline-Zeitstempel (falls verfügbar) für Herkunfts-Anzeige
+  let baseTsStart = null, baseTsEnd = null;
+  if (timestamps && timestamps.length === n) {
+    baseTsStart = timestamps[0];
+    baseTsEnd   = timestamps[baselineWindow - 1];
+  }
 
   const statuses = new Array(n).fill(0);
   let lastDetails = null;
   for (let i = 0; i < n; i++) {
-    // Auch die Baseline-Region kriegt grün (das ist die Referenz).
     if (i < baselineWindow + window) { statuses[i] = 0; continue; }
     const recent = values.slice(i - window + 1, i + 1);
     const rStddev = _stddev(recent);
     const rMin    = Math.min(...recent);
     const rSlope  = _slope(recent);
+    const rMean   = _mean(recent);
 
-    // Drei Einzel-Status
     let sStddev = 0;
     if (baseStddev > 0) {
       if (rStddev > baseStddev * sAlert) sStddev = 2;
@@ -2276,10 +2331,16 @@ function analyzeSignal(values, settings) {
     if (drop > mAlert) sMin = 2;
     else if (drop > mWarn) sMin = 1;
 
-    statuses[i] = Math.max(sStddev, sSlope, sMin);
+    let sMean = 0;
+    const meanDrop = baseMean - rMean;
+    if (meanDrop > meanAlert) sMean = 2;
+    else if (meanDrop > meanWarn) sMean = 1;
+
+    statuses[i] = Math.max(sStddev, sSlope, sMin, sMean);
     lastDetails = {
       rStddev, baseStddev, rSlope, rMin, baseMin, drop,
-      sStddev, sSlope, sMin,
+      rMean, baseMean, meanDrop,
+      sStddev, sSlope, sMin, sMean,
     };
   }
 
@@ -2288,7 +2349,11 @@ function analyzeSignal(values, settings) {
     current: statuses[n-1] || 0,
     details: lastDetails,
     hasData: true,
-    baseline: { stddev: baseStddev, min: baseMin },
+    baseline: {
+      stddev: baseStddev, min: baseMin, mean: baseMean,
+      window: baselineWindow,
+      ts_start: baseTsStart, ts_end: baseTsEnd,
+    },
   };
 }
 

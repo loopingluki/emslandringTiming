@@ -61,9 +61,9 @@ _DEFAULTS: dict = {
         "Rennkart":  {"enabled": False, "threshold_sec": 60, "window": 5,  "outlier_factor": 1.5},
         "Superkart": {"enabled": False, "threshold_sec": 60, "window": 5,  "outlier_factor": 1.5},
     },
-    # Signal-Defekt-Erkennung: analysiert den Signalstärke-Verlauf eines
-    # Transponders auf Anzeichen für baldigen Ausfall. Drei Indikatoren
-    # werden kombiniert (jeder mit Warn- und Alert-Schwelle):
+    # Transponder-Defekt-Erkennung: analysiert den Signalstärke-Verlauf
+    # eines Transponders auf Anzeichen für baldigen Ausfall. Vier
+    # Indikatoren werden kombiniert (max-Status gewinnt):
     #
     #   1. Volatility (Stddev-Wachstum): aktuelles stddev der letzten
     #      'window' Punkte gegen Baseline-stddev der ersten
@@ -71,32 +71,39 @@ _DEFAULTS: dict = {
     #      Schwankung als zu Beginn.
     #
     #   2. Trend (Slope): linearer Anstieg pro Datenpunkt im 'window'.
-    #      Negativ = Signalverlauf wird schlechter. Bei Kart 14 fiel
-    #      der Mittelwert von ~175 auf ~155 über ~100 Punkte = Slope
-    #      ungefähr -0.2 pro Punkt.
+    #      Negativ = Signal fällt aktuell. Nur lokaler Trend, NICHT
+    #      Gesamttrend (dafür gibt's Mean-Drop).
     #
     #   3. Min-Drop: aktueller Min im 'window' gegen Baseline-Min.
-    #      Wenn das Signal-Minimum deutlich tiefer wird als gewohnt
-    #      → Indikator dass Signal-Aussetzer kommen.
+    #      Erkennt einzelne Signal-Aussetzer.
     #
-    # Status pro Punkt = max der drei Einzel-Status (0=grün, 1=gelb, 2=rot).
+    #   4. Mean-Drop: Differenz zwischen aktuellem Mittelwert und
+    #      Baseline-Mittelwert. Erkennt langsamen Verschleiß auch
+    #      dann wenn der Slope schon wieder flach ist (Signal hat
+    #      sich auf niedrigem Niveau eingependelt).
+    #
+    # Status pro Punkt = max der vier Einzel-Status (0=grün, 1=gelb, 2=rot).
     "signal_defect_categories": {
         "Minikart":  {"enabled": False, "window": 50, "baseline_window": 100,
                       "stddev_warn_factor": 1.5, "stddev_alert_factor": 2.0,
                       "slope_warn": -0.05, "slope_alert": -0.10,
-                      "min_drop_warn": 15, "min_drop_alert": 30},
+                      "min_drop_warn": 15, "min_drop_alert": 30,
+                      "mean_drop_warn": 10, "mean_drop_alert": 20},
         "Leihkart":  {"enabled": True,  "window": 50, "baseline_window": 100,
                       "stddev_warn_factor": 1.5, "stddev_alert_factor": 2.0,
                       "slope_warn": -0.05, "slope_alert": -0.10,
-                      "min_drop_warn": 15, "min_drop_alert": 30},
+                      "min_drop_warn": 15, "min_drop_alert": 30,
+                      "mean_drop_warn": 10, "mean_drop_alert": 20},
         "Rennkart":  {"enabled": False, "window": 50, "baseline_window": 100,
                       "stddev_warn_factor": 1.5, "stddev_alert_factor": 2.0,
                       "slope_warn": -0.05, "slope_alert": -0.10,
-                      "min_drop_warn": 15, "min_drop_alert": 30},
+                      "min_drop_warn": 15, "min_drop_alert": 30,
+                      "mean_drop_warn": 10, "mean_drop_alert": 20},
         "Superkart": {"enabled": False, "window": 50, "baseline_window": 100,
                       "stddev_warn_factor": 1.5, "stddev_alert_factor": 2.0,
                       "slope_warn": -0.05, "slope_alert": -0.10,
-                      "min_drop_warn": 15, "min_drop_alert": 30},
+                      "min_drop_warn": 15, "min_drop_alert": 30,
+                      "mean_drop_warn": 10, "mean_drop_alert": 20},
     },
     "classes": [
         {"name": "Minikart",  "color": "#f9a800"},

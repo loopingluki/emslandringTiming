@@ -277,16 +277,17 @@
         </div>
       </div>
 
-      <!-- Signal-Defekt-Erkennung pro Kart-Klasse -->
+      <!-- Transponder-Defekt-Erkennung pro Kart-Klasse -->
       <div class="settings-section">
-        <h3>Signal-Defekt-Erkennung</h3>
+        <h3>Transponder-Defekt-Erkennung</h3>
         <p style="font-size:11px;color:var(--text-muted);margin:4px 0 10px">
           Analysiert den Signalstärke-Verlauf jedes Transponders auf Anzeichen für
-          baldigen Ausfall. Drei Indikatoren werden gegen die Baseline (= erste N
-          Datenpunkte) geprüft:
+          baldigen Ausfall. <b>Vier</b> Indikatoren werden gegen die Baseline
+          (= erste N Datenpunkte im Chart-Range) geprüft:
           <b>Volatility</b> (Schwankung wird größer),
-          <b>Slope</b> (Signal fällt insgesamt) und
-          <b>Min-Drop</b> (Tiefstwerte werden niedriger). Status grün/gelb/rot
+          <b>Slope</b> (Signal fällt aktuell),
+          <b>Min-Drop</b> (Tiefstwerte werden niedriger) und
+          <b>Mean-Drop</b> (Mittelwert insgesamt gefallen). Status grün/gelb/rot
           wird im Transponder-Modal und im Chart farbig dargestellt – ideal zum
           interaktiven Schwellwert-Justieren an bekannten Defektfällen (z.B. Kart 14).
         </p>
@@ -339,6 +340,15 @@
           <div class="form-group">
             <label>Min-Drop Alarm (rot)</label>
             <input type="number" id="s-sigdef-cat-min-alert" min="0" max="100" step="1">
+          </div>
+          <div class="form-group">
+            <label>Mean-Drop Warnung (gelb)</label>
+            <input type="number" id="s-sigdef-cat-mean-warn" min="0" max="100" step="1">
+            <small style="color:var(--text-muted)">Mittelwert ist um X Punkte unter Baseline-Ø. Fängt langsamen Verschleiß ab.</small>
+          </div>
+          <div class="form-group">
+            <label>Mean-Drop Alarm (rot)</label>
+            <input type="number" id="s-sigdef-cat-mean-alert" min="0" max="100" step="1">
           </div>
         </div>
       </div>
