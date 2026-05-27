@@ -2006,7 +2006,8 @@ function _redrawTdChart() {
 
   drawStrengthChart('td-strength-chart', _tdChartData,
     'td-chart-tooltip', _tdChartZoom,
-    analysis ? analysis.statuses : null);
+    analysis ? analysis.statuses : null,
+    analysis);
 
   // Status-Badge aktualisieren
   const badge = document.getElementById('td-signal-status');
@@ -2051,19 +2052,49 @@ function _redrawTdChart() {
     baseInfo = `Baseline: ${fmtDate(b.ts_start)}–${fmtDate(b.ts_end)} (${ageStr})`;
   }
 
-  // Indikator-Helfer: kleines Status-Symbol pro Indikator
+  // Indikator-Helfer
   const sym = (s) => s === 2 ? '🔴' : s === 1 ? '🟡' : '🟢';
+  const info = (title) =>
+    `<span class="info-icon" title="${title}" style="cursor:help;font-size:10px;color:var(--text-dim);opacity:.7;margin-left:1px">ⓘ</span>`;
+
+  const INFO_STDDEV =
+    'Standardabweichung der letzten N Punkte (Window). ' +
+    'Misst wie stark die Linie zappelt. ' +
+    'Aktueller Wert vs. Baseline-Stddev × Faktor: bei 1.5 = WARN, bei 2.0 = ALARM. ' +
+    'Klassisches Frühwarnsignal: Vor einem Defekt fängt das Signal an zu zucken.';
+  const INFO_SLOPE =
+    'Linearer Trend der letzten N Punkte. ' +
+    'Negativ = Signal fällt aktuell, positiv = Signal steigt. ' +
+    'ACHTUNG: misst nur den LOKALEN Trend (Window), nicht den Gesamttrend ' +
+    'über die ganze Messreihe. Wenn das Signal sich auf niedrigem Niveau ' +
+    'eingependelt hat, ist der Slope wieder ≈ 0 obwohl es insgesamt gefallen ist – ' +
+    'dafür ist der Mean-Drop-Indikator zuständig.';
+  const INFO_MIN_DROP =
+    'Differenz zwischen aktuellem Tiefstwert (Window) und Baseline-Tiefstwert. ' +
+    'Erkennt einzelne Signal-Aussetzer: Wenn das Signal jetzt auf 145 fällt ' +
+    'obwohl es früher nie unter 163 ging → 18 Punkte Drop. ' +
+    'Indikator für beginnende Hardware-Probleme (lose Antenne, kalte Lötstelle).';
+  const INFO_MEAN_DROP =
+    'Differenz zwischen Baseline-Mittelwert und aktuellem Mittelwert. ' +
+    'Erkennt langsamen Verschleiß auch wenn der Slope schon wieder flach ist. ' +
+    'Beispiel: Baseline-Ø 175, aktueller Ø 153 → Mean-Drop 22. ' +
+    'Stärkster Indikator wenn ein Transponder über Wochen schlechter wird.';
 
   badge.innerHTML =
     `<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">` +
       `<b>Transponder: ${labels[analysis.current]}</b>` +
-      `<span style="font-size:10px;color:var(--text-dim);font-weight:normal">${baseInfo}</span>` +
+      `<span style="font-size:10px;color:var(--text-dim);font-weight:normal">${baseInfo}` +
+        info('Die Baseline ist der „Soll-Zustand" gegen den die aktuellen Werte verglichen werden. ' +
+             'Sie wird aus den ÄLTESTEN „baseline_window" Punkten im aktuell gewählten Chart-Range gebildet. ' +
+             'Wechselst du oben die Range (Letzte 1000 / 7 Tage / ... / 2 Jahre), wandert auch die Baseline mit. ' +
+             'Hinweis: Tooltip-Hover auf einen Punkt im Chart zeigt die Indikator-Werte zu genau diesem Zeitpunkt.') +
+      `</span>` +
     `</div>` +
     `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);line-height:1.6">` +
-      `${sym(d.sStddev)} <b>Stddev:</b> ${fmt(d.rStddev)} (Baseline ${fmt(d.baseStddev)})` +
-      ` &nbsp;·&nbsp; ${sym(d.sSlope)} <b>Slope:</b> ${fmt(d.rSlope, 3)}` +
-      ` &nbsp;·&nbsp; ${sym(d.sMin)} <b>Min-Drop:</b> ${fmt(d.drop, 0)} (Baseline-Min ${fmt(d.baseMin, 0)})` +
-      ` &nbsp;·&nbsp; ${sym(d.sMean)} <b>Mean-Drop:</b> ${fmt(d.meanDrop, 1)} (Baseline-Ø ${fmt(d.baseMean, 0)} → aktuell ${fmt(d.rMean, 0)})` +
+      `${sym(d.sStddev)} <b>Stddev:</b>${info(INFO_STDDEV)} ${fmt(d.rStddev)} (Baseline ${fmt(d.baseStddev)})` +
+      ` &nbsp;·&nbsp; ${sym(d.sSlope)} <b>Slope:</b>${info(INFO_SLOPE)} ${fmt(d.rSlope, 3)}` +
+      ` &nbsp;·&nbsp; ${sym(d.sMin)} <b>Min-Drop:</b>${info(INFO_MIN_DROP)} ${fmt(d.drop, 0)} (Baseline-Min ${fmt(d.baseMin, 0)})` +
+      ` &nbsp;·&nbsp; ${sym(d.sMean)} <b>Mean-Drop:</b>${info(INFO_MEAN_DROP)} ${fmt(d.meanDrop, 1)} (Baseline-Ø ${fmt(d.baseMean, 0)} → aktuell ${fmt(d.rMean, 0)})` +
     `</div>`;
 }
 
@@ -2308,6 +2339,10 @@ function analyzeSignal(values, settings, timestamps) {
   }
 
   const statuses = new Array(n).fill(0);
+  // Pro-Punkt-Details für nachträgliche Inspektion (Hover-Tooltip).
+  // Nur Punkte mit gültiger Rolling-Analyse haben hier Werte, alle
+  // anderen bleiben null (für Speicher: 260 Punkte × ~80 B = ~20 KB).
+  const perPoint = new Array(n).fill(null);
   let lastDetails = null;
   for (let i = 0; i < n; i++) {
     if (i < baselineWindow + window) { statuses[i] = 0; continue; }
@@ -2337,15 +2372,18 @@ function analyzeSignal(values, settings, timestamps) {
     else if (meanDrop > meanWarn) sMean = 1;
 
     statuses[i] = Math.max(sStddev, sSlope, sMin, sMean);
-    lastDetails = {
-      rStddev, baseStddev, rSlope, rMin, baseMin, drop,
-      rMean, baseMean, meanDrop,
+    const d = {
+      rStddev, rSlope, rMin, rMean, drop, meanDrop,
       sStddev, sSlope, sMin, sMean,
+      status: statuses[i],
     };
+    perPoint[i] = d;
+    lastDetails = { ...d, baseStddev, baseMin, baseMean };
   }
 
   return {
     statuses,
+    perPoint,
     current: statuses[n-1] || 0,
     details: lastDetails,
     hasData: true,
@@ -2384,7 +2422,9 @@ function _bindChartHover(canvas, tooltip, data, xFn, yFn, labelFn) {
     const idx = Math.round(mx / step);
     if (idx < 0 || idx >= data.length) { tooltip.style.display = 'none'; return; }
     const d = data[idx];
-    tooltip.textContent = labelFn(d, idx);
+    // innerHTML: erlaubt HTML in Labels (Indikator-Werte mit Formatierung).
+    // Sicher solange Datenquelle vertrauenswürdig ist (= unser Backend).
+    tooltip.innerHTML = labelFn(d, idx);
     const pct = idx / (data.length - 1);
     tooltip.style.display = '';
     tooltip.style.left = `${pct * 100}%`;
@@ -2393,7 +2433,7 @@ function _bindChartHover(canvas, tooltip, data, xFn, yFn, labelFn) {
   canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
 }
 
-function drawStrengthChart(canvasId, data, tooltipId, zoom, statuses) {
+function drawStrengthChart(canvasId, data, tooltipId, zoom, statuses, analysis) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -2498,7 +2538,26 @@ function drawStrengthChart(canvasId, data, tooltipId, zoom, statuses) {
         (d, i) => {
           const v = typeof d === 'object' ? d.strength : d;
           const ts = typeof d === 'object' && d.ts ? new Date(d.ts * 1000).toLocaleString('de-DE') : '';
-          return `Stärke: ${v}${ts ? '  ' + ts : ''}`;
+          let html = `<div><b>Stärke:</b> ${v}</div>`;
+          if (ts) html += `<div style="opacity:.7;font-size:10px">${ts}</div>`;
+          // Indikator-Details für diesen Punkt – nur wenn Analyse aktiv
+          // und Punkt im analysierten Bereich (nach Baseline + Window).
+          if (analysis && analysis.perPoint && analysis.perPoint[i]) {
+            const p = analysis.perPoint[i];
+            const sym = (s) => s === 2 ? '🔴' : s === 1 ? '🟡' : '🟢';
+            const labels = ['STABIL', 'INSTABIL', 'DEFEKT'];
+            const fmt = (n, dp=2) => n == null ? '—' : (+n).toFixed(dp);
+            html += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.15);font-size:10px;line-height:1.5">`;
+            html += `<div style="margin-bottom:2px"><b>Status zu diesem Zeitpunkt: ${labels[p.status]}</b></div>`;
+            html += `${sym(p.sStddev)} Stddev: ${fmt(p.rStddev)}<br>`;
+            html += `${sym(p.sSlope)} Slope: ${fmt(p.rSlope, 3)}<br>`;
+            html += `${sym(p.sMin)} Min-Drop: ${fmt(p.drop, 0)}<br>`;
+            html += `${sym(p.sMean)} Mean-Drop: ${fmt(p.meanDrop, 1)}`;
+            html += `</div>`;
+          } else if (analysis && analysis.hasData) {
+            html += `<div style="margin-top:4px;font-size:10px;opacity:.6">Noch in Baseline / Aufwärmphase</div>`;
+          }
+          return html;
         }
       );
     }

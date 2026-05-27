@@ -1048,19 +1048,25 @@ tr.has-defect td:nth-child(2) { color: var(--red); font-weight: 600; }
 .range-pill:hover { color: var(--text); border-color: var(--text-dim); }
 .range-pill.active { background: var(--bg2); border-color: var(--blue); color: var(--blue); }
 
+/* ─── Info-Icon mit nativer Title-Tooltip ────────────────────────────────── */
+.info-icon { transition: opacity .15s, color .15s; }
+.info-icon:hover { opacity: 1 !important; color: var(--accent, #58a6ff); }
+
 /* ─── Chart Tooltip ─────────────────────────────────────────────────────── */
 .chart-tooltip {
   position: absolute;
-  background: rgba(22,27,34,0.95);
+  background: rgba(22,27,34,0.96);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 5px 9px;
+  padding: 6px 10px;
   font-size: 11px;
   color: var(--white);
   pointer-events: none;
   white-space: nowrap;
   z-index: 10;
   transform: translate(-50%, -110%);
+  max-width: 260px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
 }
 
 /* ─── Class Management List ──────────────────────────────────────────────── */
