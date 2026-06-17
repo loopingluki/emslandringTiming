@@ -91,6 +91,11 @@ class Emulator:
         self._green_wall_time: float | None = None
         # Wird beim ersten FINISH-Tick gesetzt (außer GP-Overtime).
         self._finish_wall_time: float | None = None
+        # Pause-Tracking: wenn nicht None, ist der Lauf gerade pausiert
+        # und _live_elapsed_sec friert auf diesem Zeitpunkt. Beim Resume
+        # wird die Pause-Dauer auf _green_wall_time addiert, sodass die
+        # Wandzeit-Rechnung wieder korrekt läuft.
+        self._paused_wall_time: float | None = None
 
         # Zeitschwellen (Sekunden seit FINISH-Beginn) – aus Mitschnitten:
         # Training: elapsed friert, springt nach ~75 s auf 0.
@@ -302,10 +307,16 @@ class Emulator:
     def _live_elapsed_sec(self) -> int:
         """Wand-zeit-basierte elapsed seit GREEN. Wächst auch dann weiter,
         wenn race_engine den internen Timer angehalten hat (z.B. nach
-        Countdown=0 in der GP-Overtime-Phase)."""
+        Countdown=0 in der GP-Overtime-Phase).
+
+        Bei aktiver Pause friert der Wert ein – beim Resume verschiebt
+        sich _green_wall_time um die Pause-Dauer, sodass keine Drift
+        gegen die echte Restzeit (race_engine) entsteht.
+        """
         if self._green_wall_time is None:
             return 0
-        return max(0, int(time.time() - self._green_wall_time))
+        ref = self._paused_wall_time if self._paused_wall_time is not None else time.time()
+        return max(0, int(ref - self._green_wall_time))
 
     def _fmt_F(
         self, field1: int, cd_sec: int, wall: str, el_sec: int, status6: str
@@ -357,6 +368,7 @@ class Emulator:
         self._is_gp = bool(is_gp)
         self._green_wall_time = time.time()
         self._finish_wall_time = None
+        self._paused_wall_time = None
 
         # 1. $C – "Online" Status (Spacing exakt wie im Mitschnitt)
         if self._is_gp:
@@ -543,6 +555,31 @@ class Emulator:
             f'$F,9999,"00:00:00","{wall}","{_hms(el)}","FINISH"'
         )
         self._last_tick_sec = int(time.time())
+
+    async def pause(self) -> None:
+        """Race-engine hat den Lauf pausiert – Wandzeit-Drift verhindern.
+
+        Ohne diesen Hook würde der Emulator stupid weiter Wandzeit
+        zählen, während race_engine.elapsed_sec auf dem Pause-Wert
+        einfriert. Die Kloft-Anzeige liefe dann pro Pause-Sekunde
+        eine Sekunde gegen die echte Restzeit voraus.
+        """
+        if self._paused_wall_time is not None or self._green_wall_time is None:
+            return
+        self._paused_wall_time = time.time()
+
+    async def resume(self) -> None:
+        """Race-engine setzt den Lauf fort – Pause-Dauer ausgleichen.
+
+        Verschiebt ``_green_wall_time`` um die Dauer der Pause nach
+        hinten. Damit liefert ``_live_elapsed_sec`` weiterhin den
+        wahren elapsed-Wert ohne die Pause mitzuzählen.
+        """
+        if self._paused_wall_time is None or self._green_wall_time is None:
+            return
+        pause_duration = time.time() - self._paused_wall_time
+        self._green_wall_time += pause_duration
+        self._paused_wall_time = None
 
     async def session_complete(self, run_id: int) -> None:
         """Markiert das endgültige Session-Ende intern.

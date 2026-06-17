@@ -35,7 +35,18 @@ class KartState:
     last_passing_us: int | None = None  # decoder µs timestamp
     seen_after_finish: bool = False   # für finish-Logik
 
-    def record(self, timestamp_us: int, strength: int, hits: int) -> int | None:
+    def record(self, timestamp_us: int, strength: int, hits: int,
+               count_lap: bool = True) -> int | None:
+        """Verarbeitet ein Passing.
+
+        ``count_lap=False`` (Default ``True``) wird verwendet wenn das
+        Passing zwar registriert werden soll (Hits, Strength, Diff für
+        die nächste Runde), aber die Runde NICHT in die Wertung
+        eingehen darf. Anwendungsfall: Im GP-finishing-Modus hat ein
+        Kart seine Schlussrunde bereits gefahren (seen_after_finish=True)
+        – jede weitere Linien-Überquerung wäre eine "Geister-Runde" und
+        würde die Endplatzierung verfälschen.
+        """
         self.strength = strength
         self.hits = hits
         self.last_passing_ts = time.time()
@@ -46,9 +57,13 @@ class KartState:
             if 10_000_000 <= diff <= 1_800_000_000:
                 lap_us = diff
 
+        # last_passing_us IMMER aktualisieren – auch wenn die Runde
+        # nicht gewertet wird. Sonst würde die nächste Runde-Diff
+        # über die Geister-Runde mit hinweg berechnet werden und
+        # ggf. zu groß werden (>1800s) bzw. inkonsistent sein.
         self.last_passing_us = timestamp_us
 
-        if lap_us is not None:
+        if lap_us is not None and count_lap:
             self.laps += 1
             self.last_us = lap_us
             self.lap_times_us.append(lap_us)
@@ -64,8 +79,9 @@ class KartState:
                     self.trend = "down"
                 else:
                     self.trend = "stable"
+            return lap_us
 
-        return lap_us
+        return None
 
     def to_dict(self, position: int) -> dict:
         return {
@@ -200,6 +216,8 @@ class RaceEngine:
             return
         self.status = "paused"
         await self._cancel_timer()
+        # Emulator informieren: Wandzeit-Drift gegen Kloft-Anzeige verhindern
+        await emulator.pause()
         await database.update_run(self.run_id, status="paused")
         await self._broadcast_run_state()
 
@@ -207,6 +225,9 @@ class RaceEngine:
         if self.status != "paused":
             return
         self.status = "running"
+        # Emulator informieren BEVOR der Timer wieder startet, damit
+        # die nächste $F-Zeile sofort wieder synchron ist
+        await emulator.resume()
         await database.update_run(self.run_id, status="running")
         self._timer_task = asyncio.create_task(self._timer_loop(), name="timer")
         await self._broadcast_run_state()
@@ -274,9 +295,27 @@ class RaceEngine:
             self.karts[kart_nr] = KartState(kart_nr=kart_nr, name=name)
 
         kart = self.karts[kart_nr]
-        lap_us = kart.record(timestamp_us, strength, hits)
 
-        # In DB speichern
+        # Im GP-finishing-Modus: hat ein Kart seine Schlussrunde schon gefahren
+        # (seen_after_finish=True), dürfen weitere Linien-Überquerungen NICHT
+        # mehr als Runden gewertet werden. Sonst:
+        #   1. Ein 2./3.-Platzierter könnte durch zusätzliche Runden zum
+        #      neuen Führenden werden und _check_leader_crossed() würde
+        #      das Rennen sofort als beendet ansehen (er hat ja
+        #      seen_after_finish=True).
+        #   2. Ein Kart das in der Box-Einfahrt umdreht und nochmal über
+        #      die Linie fährt, würde sich Phantom-Runden gutschreiben.
+        # Diese Geister-Passings landen mit lap_time_us=NULL trotzdem in
+        # der DB (für Forensik), aber sie verändern weder Position noch
+        # Gesamtzeit.
+        ignore_lap = (self.status == "finishing"
+                      and self.run
+                      and self.run["mode"] in ("gp_time", "gp_laps")
+                      and kart.seen_after_finish)
+
+        lap_us = kart.record(timestamp_us, strength, hits, count_lap=not ignore_lap)
+
+        # In DB speichern – auch ungewertete Passings (lap_us=None) für Forensik
         if self.run_id and self.status in ("running", "finishing"):
             await database.add_passing(
                 self.run_id, transponder_id, kart_nr,
@@ -287,6 +326,11 @@ class RaceEngine:
         # neue Karts übernimmt der Emulator selbst beim ersten Passing.
         if kart_nr not in self.first_karts_seen:
             self.first_karts_seen.add(kart_nr)
+
+        # Geister-Passing: kein Status-Update, kein Broadcast, kein Emulator-
+        # Event – das Kart ist aus Renn-Sicht fertig.
+        if ignore_lap:
+            return
 
         # Finish-Flag VOR Broadcast setzen, damit das Kart sofort als „fertig“ im UI erscheint
         if self.status == "finishing":
