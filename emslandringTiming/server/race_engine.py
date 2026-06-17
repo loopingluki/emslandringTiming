@@ -296,21 +296,19 @@ class RaceEngine:
 
         kart = self.karts[kart_nr]
 
-        # Im GP-finishing-Modus: hat ein Kart seine Schlussrunde schon gefahren
-        # (seen_after_finish=True), dürfen weitere Linien-Überquerungen NICHT
-        # mehr als Runden gewertet werden. Sonst:
-        #   1. Ein 2./3.-Platzierter könnte durch zusätzliche Runden zum
-        #      neuen Führenden werden und _check_leader_crossed() würde
-        #      das Rennen sofort als beendet ansehen (er hat ja
-        #      seen_after_finish=True).
-        #   2. Ein Kart das in der Box-Einfahrt umdreht und nochmal über
-        #      die Linie fährt, würde sich Phantom-Runden gutschreiben.
-        # Diese Geister-Passings landen mit lap_time_us=NULL trotzdem in
-        # der DB (für Forensik), aber sie verändern weder Position noch
-        # Gesamtzeit.
+        # Geister-Runden-Schutz NUR während waiting_others (= nach dem
+        # offiziellen Karo-Flag des Leaders). In waiting_leader läuft
+        # das Rennen noch frei weiter, jede Linien-Überquerung zählt
+        # als normale Runde (so kann auch ein 4-Runden-Hinterlieger
+        # bei einem Massenunfall noch aufholen und Sieger werden).
+        # Erst nachdem der Leader die Karo-Flagge bekommen hat, ist das
+        # Rennen offiziell vorbei – ab dann darf jedes Kart nur noch
+        # eine letzte Schluss-Runde fahren. Weitere Crossings (z.B.
+        # umdrehen und nochmal drüber) sind Geister und werden ignoriert.
         ignore_lap = (self.status == "finishing"
                       and self.run
                       and self.run["mode"] in ("gp_time", "gp_laps")
+                      and self._finish_phase == "waiting_others"
                       and kart.seen_after_finish)
 
         lap_us = kart.record(timestamp_us, strength, hits, count_lap=not ignore_lap)
@@ -465,11 +463,16 @@ class RaceEngine:
             wait = cfg.get()["wait_time_sec"]
             await self._ampel_seq("ampel_seq_training_finish")
         else:
-            # Grand Prix: erst auf Führenden warten
+            # Grand Prix: nach Time-Up läuft das Rennen frei weiter bis
+            # der dynamische Leader die Linie kreuzt (Karo-Flag). Bis
+            # dahin können auch Hinterlieger noch aufholen – jede Runde
+            # zählt normal. Für den unwahrscheinlichen Fall dass alle
+            # Karts crashen läuft ein langer Safety-Timer; nach Ablauf
+            # wird das Race mit dem aktuellen Stand finalisiert.
             self._finish_phase = "waiting_leader"
             for k in self.karts.values():
                 k.seen_after_finish = False
-            wait = cfg.get()["wait_time_gp_sec"]
+            wait = cfg.get().get("wait_time_gp_leader_max_sec", 600)
 
         self._finish_wait_total = wait
         await self._broadcast_run_state()
@@ -483,14 +486,18 @@ class RaceEngine:
             return
         leader = sorted_karts[0]
         if leader.seen_after_finish:
-            # Führender hat Linie überquert → Finish-Signal, warte auf alle
+            # Karo-Flag offiziell: Führender hat die Linie als Sieger
+            # überquert. Race wechselt von waiting_leader → waiting_others.
             await emulator.session_finish()
             await self._ampel_seq("ampel_seq_gp_finish")
             self._finish_phase = "waiting_others"
-            for k in self.karts.values():
-                k.seen_after_finish = False
-            leader.seen_after_finish = True  # Führender gilt als schon gesehen
-            # Timeout zurücksetzen
+            # KEIN Reset der seen-Flags. Karts die in waiting_leader
+            # bereits gekreuzt sind, haben ihre Schluss-Runde schon
+            # gefahren – sie müssen nicht nochmal kreuzen.
+            # Karts mit seen_after_finish=False sind die, die noch eine
+            # Schluss-Runde fahren dürfen (ihr nächstes Crossing zählt).
+            # Den langen Safety-Timer (wait_time_gp_leader_max_sec) durch
+            # den kurzen Stragglers-Timer (wait_time_gp_sec) ersetzen.
             if self._finish_task:
                 self._finish_task.cancel()
             wait = cfg.get()["wait_time_gp_sec"]
@@ -500,6 +507,11 @@ class RaceEngine:
             self._finish_task = asyncio.create_task(
                 self._finish_timeout(wait), name="finish_timeout"
             )
+            # Sofort prüfen ob alle schon durch sind. Typischer Fall:
+            # bei einem normalen GP-Ende sind 32, 33, 46 alle in
+            # waiting_leader gekreuzt → alle seen=True → Race endet
+            # ohne Warten.
+            await self._check_all_crossed()
 
     async def _check_all_crossed(self) -> None:
         if all(k.seen_after_finish for k in self.karts.values()):

@@ -15,6 +15,12 @@ _DEFAULTS: dict = {
     "gp_laps_count": 15,
     "wait_time_sec": 60,
     "wait_time_gp_sec": 120,
+    # Safety-Timeout für GP-waiting_leader-Phase. Nach Time-Up läuft das
+    # Race frei weiter bis der dynamische Leader die Linie kreuzt. Falls
+    # alle Karts crashen oder ein Software-Fehler vorliegt, würde sonst
+    # endlos gewartet werden. Default 10 Min – nach Ablauf wird das Race
+    # mit dem aktuellen Stand finalisiert.
+    "wait_time_gp_leader_max_sec": 600,
     "firebase_credentials": "",
     "printer": "default",
     "ampel_ip":                   "192.168.178.128",
