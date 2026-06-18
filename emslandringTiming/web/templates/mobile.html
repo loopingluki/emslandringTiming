@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#c62828">
+<title>Startaufstellung · Emslandring</title>
+<style>
+  @font-face { font-family:'Bebas Neue'; src:local('Bebas Neue'), url('/fonts/BebasNeue-Regular.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow Condensed'; font-weight:700; src:local('Barlow Condensed Bold'), url('/fonts/BarlowCondensed-Bold.ttf') format('truetype'); font-display:swap; }
+  @font-face { font-family:'Barlow'; src:local('Barlow'), url('/fonts/Barlow-Regular.ttf') format('truetype'); font-display:swap; }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { min-height:100%; }
+  body { font-family:'Barlow',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#0d1117; color:#f0f0f0;
+         -webkit-tap-highlight-color:transparent; padding-bottom:env(safe-area-inset-bottom); }
+
+  /* ── Header ── */
+  .header { background:linear-gradient(160deg,#c62828 0%,#7a1414 100%);
+            padding:16px 16px 14px; text-align:center; position:relative; overflow:hidden;
+            padding-top:max(16px, env(safe-area-inset-top)); }
+  .title { font-family:'Bebas Neue','Impact',sans-serif; font-size:26px; line-height:1;
+           letter-spacing:.04em; color:#fff; }
+  .subtitle { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+              font-size:11px; letter-spacing:.3em; text-transform:uppercase;
+              color:#ffd600; margin-top:5px; }
+  .date { font-size:12px; color:rgba(255,255,255,.7); margin-top:4px; }
+
+  /* ── Run-Pills (horizontal scroll) ── */
+  .runs-bar { background:#161b22; padding:10px 0; border-bottom:1px solid #30363d;
+              position:sticky; top:0; z-index:10; }
+  .runs-scroll { display:flex; gap:6px; padding:0 12px; overflow-x:auto;
+                 scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  .runs-scroll::-webkit-scrollbar { display:none; }
+  .run-pill { flex-shrink:0; padding:9px 14px; border-radius:18px;
+              background:#21262d; border:1px solid #30363d; color:#c9d1d9;
+              font-family:'Barlow',sans-serif; font-size:13px; font-weight:600;
+              white-space:nowrap; cursor:pointer; user-select:none;
+              transition:background .12s, color .12s, border-color .12s;
+              display:flex; align-items:center; gap:6px; }
+  .run-pill:active { background:#30363d; }
+  .run-pill.active { background:#c62828; color:#fff; border-color:#c62828; }
+  .run-pill .pill-status { font-size:10px; opacity:.85; }
+  .run-pill[data-status="running"] .pill-status { color:#3fb950; }
+  .run-pill[data-status="armed"]   .pill-status { color:#d29922; }
+  .run-pill[data-status="paused"]  .pill-status { color:#d29922; }
+  .run-pill[data-status="finishing"] .pill-status { color:#d29922; }
+  .run-pill[data-status="done"]    .pill-status { color:#8b949e; }
+  .run-pill[data-status="pending"] .pill-status { color:#8b949e; }
+  .run-pill.active .pill-status { color:#fff; opacity:.85; }
+
+  /* ── Run-Header ── */
+  .run-header { padding:16px 16px 10px; border-bottom:1px solid #21262d; }
+  .run-name { font-family:'Bebas Neue','Impact',sans-serif; font-size:30px; line-height:1; }
+  .run-meta { display:flex; gap:10px; margin-top:6px; flex-wrap:wrap;
+              font-size:12px; color:#8b949e; }
+  .run-meta .badge { padding:2px 8px; border-radius:10px; background:#21262d;
+                     font-weight:600; }
+  .run-meta .badge.training  { color:#3fb950; }
+  .run-meta .badge.gp_time   { color:#ffd600; background:rgba(255,214,0,.1); }
+  .run-meta .badge.gp_laps   { color:#ffd600; background:rgba(255,214,0,.1); }
+  .run-meta .badge.live { background:#c62828; color:#fff; }
+
+  /* ── Tabelle ── */
+  .table-section { padding:0 0 24px; }
+  .col-head, .row {
+    display:grid;
+    grid-template-columns: 36px 44px 1fr 70px 70px;
+    align-items:center;
+    padding: 10px 14px;
+  }
+  .col-head { background:#161b22; border-bottom:1px solid #30363d;
+              font-family:'Barlow Condensed',sans-serif; font-weight:700;
+              font-size:10px; letter-spacing:.22em; text-transform:uppercase;
+              color:#8b949e; position:sticky; top:55px; z-index:9; }
+  .col-head .h-right { text-align:right; }
+  .row { border-bottom:1px solid #21262d; }
+  .row:last-child { border-bottom:none; }
+  .row.p1 { background:rgba(198,40,40,.07); }
+  .row.p1 .pos { color:#c62828; }
+  .row.p2 .pos { color:#c9d1d9; }
+  .row.p3 .pos { color:#cd7f32; }
+
+  .pos { font-family:'Bebas Neue','Impact',sans-serif; font-size:22px; line-height:1; color:#8b949e; }
+  .kart { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:22px; color:#fff; }
+  .name { font-size:14px; color:#c9d1d9; padding-left:6px;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .num  { font-family:'Bebas Neue','Impact',sans-serif; font-size:18px; text-align:right;
+          color:#c9d1d9; font-variant-numeric:tabular-nums; letter-spacing:.04em; }
+  .num.dim { color:#6b737d; }
+  .num.best { color:#3fb950; }
+
+  /* Kart-Detail-Expansion */
+  .row { cursor:pointer; }
+  .row.expanded + .row-detail { display:block; }
+  .row-detail { display:none; padding:10px 14px 14px; background:#0d1117;
+                border-bottom:1px solid #21262d; font-size:12px; color:#8b949e; }
+  .row-detail .label { font-family:'Barlow Condensed',sans-serif; font-weight:700;
+                       font-size:10px; letter-spacing:.18em; text-transform:uppercase;
+                       margin-bottom:6px; }
+  .lap-pills { display:flex; flex-wrap:wrap; gap:4px; }
+  .lap-pill  { padding:3px 7px; background:#21262d; border-radius:4px;
+               font-family:'Bebas Neue','Impact',sans-serif; font-size:12px;
+               color:#c9d1d9; letter-spacing:.04em; }
+  .lap-pill.best { background:rgba(63,185,80,.18); color:#3fb950; }
+
+  /* ── Status-Banner ── */
+  .empty-state, .error-state {
+    padding:36px 24px; text-align:center;
+  }
+  .empty-state .icon, .error-state .icon { font-size:42px; margin-bottom:12px; }
+  .empty-state .msg, .error-state .msg { color:#8b949e; font-size:14px; }
+  .error-state .msg { color:#f85149; }
+
+  /* ── Refresh & Live-Indikator ── */
+  .footer { padding:14px 16px 24px; text-align:center; color:#6b737d;
+            font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+            font-family:'Barlow Condensed',sans-serif; font-weight:700; }
+  .footer .live { display:inline-flex; align-items:center; gap:5px; margin-right:10px; }
+  .footer .live-dot { width:7px; height:7px; border-radius:50%; background:#3fb950;
+                      animation:blink 1.5s ease-in-out infinite; }
+  .footer .live-dot.off { background:#6b737d; animation:none; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── Loading-Spinner ── */
+  #loading { padding:48px 24px; text-align:center; color:#8b949e; }
+  .spinner { display:inline-block; width:28px; height:28px;
+             border:3px solid rgba(255,255,255,.18); border-top-color:#ffd600;
+             border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ── Pull-to-Refresh-Hinweis ── */
+  .ptr-hint { text-align:center; padding:6px 0; font-size:11px; color:#6b737d;
+              background:#161b22; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="title">Startaufstellung</div>
+  <div class="subtitle">Emslandring Dankern</div>
+  <div class="date" id="date-label">—</div>
+</div>
+
+<div class="runs-bar">
+  <div class="runs-scroll" id="runs-scroll">
+    <div style="color:#6b737d;font-size:12px;padding:6px 14px">Lade Läufe…</div>
+  </div>
+</div>
+
+<div id="loading" style="display:none">
+  <div class="spinner"></div>
+  <div style="margin-top:12px;font-size:12px;letter-spacing:.1em;text-transform:uppercase">Lade …</div>
+</div>
+
+<div id="content">
+  <div class="empty-state">
+    <div class="icon">🏁</div>
+    <div class="msg">Bitte einen Lauf wählen</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span class="live" id="live-indicator">
+    <span class="live-dot" id="live-dot"></span>
+    <span id="live-label">Live</span>
+  </span>
+  <span>Auto-Refresh alle 5 s</span>
+</div>
+
+<script>
+const TODAY = new Date().toISOString().slice(0,10);
+const REFRESH_MS = 5000;
+let _runs = [];
+let _selectedRunId = null;
+let _refreshTimer = null;
+let _lastFetchOk = true;
+let _expandedKartNr = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+function fmtTime(us) {
+  if (us == null) return '–';
+  const totalMs = Math.floor(us / 1000);
+  const m = Math.floor(totalMs / 60000);
+  const rest = totalMs % 60000;
+  const s = Math.floor(rest / 1000);
+  const ms = rest % 1000;
+  return `${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+function fmtDate(d) {
+  return d.toLocaleDateString('de-DE', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric' });
+}
+function statusLabel(s) {
+  return ({
+    pending:'pending', armed:'scharf', running:'läuft',
+    paused:'pause',    finishing:'läuft aus', done:'fertig',
+    skipped:'übersp.'
+  })[s] || s;
+}
+function modeLabel(m) {
+  return ({
+    training:'Training', gp_time:'GP Zeit', gp_laps:'GP Runden'
+  })[m] || m;
+}
+function statusIcon(s) {
+  return ({
+    running:'●', armed:'⚡', paused:'⏸',
+    finishing:'🏁', done:'✓', pending:''
+  })[s] || '';
+}
+
+// ── Initial Load ─────────────────────────────────────────────────────────
+async function init() {
+  document.getElementById('date-label').textContent = fmtDate(new Date());
+  try {
+    await loadRuns();
+    // Aktiven Lauf finden und auto-selektieren, sonst letzten done, sonst ersten
+    const active = _runs.find(r => ['armed','running','paused','finishing'].includes(r.status));
+    const target = active
+      || [..._runs].reverse().find(r => r.status === 'done')
+      || _runs[0];
+    if (target) {
+      await selectRun(target.id);
+    }
+    setLive(true);
+    startAutoRefresh();
+  } catch (e) {
+    showError(e.message || 'Verbindung fehlgeschlagen');
+    setLive(false);
+  }
+}
+
+async function loadRuns() {
+  const res = await fetch(`/api/runs?date=${TODAY}`);
+  if (!res.ok) throw new Error('Läufe konnten nicht geladen werden');
+  _runs = await res.json();
+  renderRunPills();
+}
+
+function renderRunPills() {
+  const wrap = document.getElementById('runs-scroll');
+  if (!_runs.length) {
+    wrap.innerHTML = '<div style="color:#6b737d;font-size:12px;padding:6px 14px">Heute noch keine Läufe</div>';
+    return;
+  }
+  wrap.innerHTML = _runs.map(r => {
+    const icon = statusIcon(r.status);
+    const lbl  = statusLabel(r.status);
+    return `<div class="run-pill ${r.id === _selectedRunId ? 'active' : ''}"
+                  data-run-id="${r.id}" data-status="${r.status}">
+      ${r.name}
+      <span class="pill-status">${icon} ${lbl}</span>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('.run-pill').forEach(p => {
+    p.addEventListener('click', () => selectRun(+p.dataset.runId));
+  });
+  // Active-Pill ins Sichtfeld scrollen
+  const activePill = wrap.querySelector('.run-pill.active');
+  if (activePill) activePill.scrollIntoView({ inline:'center', block:'nearest' });
+}
+
+// ── Run-Auswahl + Anzeige ────────────────────────────────────────────────
+async function selectRun(runId) {
+  _selectedRunId = runId;
+  _expandedKartNr = null;
+  renderRunPills();
+  await refreshContent();
+}
+
+async function refreshContent() {
+  if (!_selectedRunId) return;
+  try {
+    const res = await fetch(`/api/runs/${_selectedRunId}`);
+    if (!res.ok) throw new Error(`Lauf ${_selectedRunId} nicht gefunden`);
+    const run = await res.json();
+    renderRun(run);
+    _lastFetchOk = true;
+    setLive(true);
+  } catch (e) {
+    _lastFetchOk = false;
+    setLive(false);
+  }
+}
+
+function renderRun(run) {
+  const c = document.getElementById('content');
+  const isGP = run.mode === 'gp_time' || run.mode === 'gp_laps';
+  const isLive = ['armed','running','paused','finishing'].includes(run.status);
+  const karts = run.karts || [];
+
+  const header = `
+    <div class="run-header">
+      <div class="run-name">${escapeHtml(run.name || 'Lauf')}</div>
+      <div class="run-meta">
+        <span class="badge ${run.mode}">${modeLabel(run.mode)}</span>
+        <span class="badge">${statusIcon(run.status)} ${statusLabel(run.status)}</span>
+        ${isLive ? '<span class="badge live">LIVE</span>' : ''}
+        ${karts.length ? `<span style="color:#8b949e">${karts.length} Karts</span>` : ''}
+      </div>
+    </div>`;
+
+  if (!karts.length) {
+    c.innerHTML = header + `
+      <div class="empty-state">
+        <div class="icon">⏱</div>
+        <div class="msg">Noch keine Karts gefahren</div>
+      </div>`;
+    return;
+  }
+
+  const colHead = isGP
+    ? `<div class="col-head">
+         <span>Pos</span><span>Nr</span><span>Name</span>
+         <span class="h-right">Runden</span><span class="h-right">Beste</span>
+       </div>`
+    : `<div class="col-head">
+         <span>Pos</span><span>Nr</span><span>Name</span>
+         <span class="h-right">Beste</span><span class="h-right">Letzte</span>
+       </div>`;
+
+  const rows = karts.map((k, i) => {
+    const podium = ['p1','p2','p3'][i] || '';
+    const right1 = isGP ? `<div class="num">${k.laps ?? 0}</div>`
+                        : `<div class="num best">${fmtTime(k.best_us)}</div>`;
+    const right2 = isGP ? `<div class="num best">${fmtTime(k.best_us)}</div>`
+                        : `<div class="num dim">${fmtTime(k.last_us)}</div>`;
+    const isExpanded = _expandedKartNr === k.kart_nr;
+    const laps = (k.lap_times_us || []);
+    const bestUs = k.best_us;
+    const detailHtml = laps.length ? `
+      <div class="row-detail" data-kart-nr="${k.kart_nr}">
+        <div class="label">Alle Runden (${laps.length})</div>
+        <div class="lap-pills">
+          ${laps.map((us, idx) => `<span class="lap-pill ${us===bestUs?'best':''}">
+            ${idx+1}. ${fmtTime(us)}</span>`).join('')}
+        </div>
+      </div>` : '';
+    return `<div class="row ${podium} ${isExpanded?'expanded':''}" data-kart-nr="${k.kart_nr}">
+      <div class="pos">${i+1}</div>
+      <div class="kart">${k.kart_nr}</div>
+      <div class="name">${escapeHtml(k.name || ('Kart ' + k.kart_nr))}</div>
+      ${right1}
+      ${right2}
+    </div>${detailHtml}`;
+  }).join('');
+
+  c.innerHTML = header + `<div class="table-section">${colHead}${rows}</div>`;
+
+  // Klick auf Zeile → Detail-Expansion
+  c.querySelectorAll('.row').forEach(row => {
+    row.addEventListener('click', () => {
+      const nr = +row.dataset.kartNr;
+      _expandedKartNr = (_expandedKartNr === nr) ? null : nr;
+      // Statt komplett neu rendern: nur toggle
+      c.querySelectorAll('.row.expanded').forEach(r => r.classList.remove('expanded'));
+      if (_expandedKartNr === nr) row.classList.add('expanded');
+    });
+  });
+}
+
+function showError(msg) {
+  document.getElementById('content').innerHTML = `
+    <div class="error-state">
+      <div class="icon">⚠️</div>
+      <div class="msg">${escapeHtml(msg)}</div>
+      <div style="margin-top:18px;font-size:11px;color:#6b737d">
+        Pull-to-Refresh oder Seite neu laden.
+      </div>
+    </div>`;
+}
+
+function setLive(connected) {
+  const dot = document.getElementById('live-dot');
+  const lbl = document.getElementById('live-label');
+  if (connected) { dot.classList.remove('off'); lbl.textContent = 'Live'; }
+  else { dot.classList.add('off'); lbl.textContent = 'Offline'; }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Auto-Refresh ─────────────────────────────────────────────────────────
+function startAutoRefresh() {
+  if (_refreshTimer) clearInterval(_refreshTimer);
+  _refreshTimer = setInterval(async () => {
+    // Run-Liste auch refreshen (Status kann sich ändern)
+    try { await loadRuns(); } catch(_) {}
+    await refreshContent();
+  }, REFRESH_MS);
+}
+
+// Sleep/Wake: bei Sichtbarkeit sofort refreshen
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    refreshContent();
+  }
+});
+
+init();
+</script>
+
+</body>
+</html>

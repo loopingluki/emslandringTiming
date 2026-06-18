@@ -377,6 +377,39 @@
         </div>
       </div>
 
+      <!-- Mitarbeiter-Mobile-Ansicht -->
+      <div class="settings-section">
+        <h3>Mitarbeiter-Mobile (Startaufstellung)</h3>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 10px">
+          Schlanke Read-Only-Seite für Mitarbeiter-Handys (z.B. nach Qualifying zur
+          Startaufstellung). Mitarbeiter scannen den QR-Code → sehen sofort die
+          aktuelle Rangliste, können zwischen den Läufen wechseln. Keine Bedienung
+          möglich. Funktioniert im Karthallen-WLAN.
+        </p>
+        <div class="settings-grid">
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label>URL für QR-Code (Server im Karthallen-WLAN)</label>
+            <input type="text" id="s-mobile-base-url" placeholder="http://192.168.178.100:8081">
+            <small style="color:var(--text-muted)">
+              Leer lassen → automatisch aus aktueller Adresse abgeleitet.
+            </small>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <a id="btn-mobile-qr-print" href="/mobile-qr" target="_blank"
+               class="btn" style="text-decoration:none;display:inline-block">
+              🖨 QR-Aushang öffnen / drucken
+            </a>
+            <a id="btn-mobile-open" href="/mobile" target="_blank"
+               class="btn" style="text-decoration:none;display:inline-block">
+              👁 Vorschau Mobile-Ansicht
+            </a>
+            <img id="mobile-qr-preview" src="/api/mobile-qr"
+                 alt="QR Code Vorschau"
+                 style="width:120px;height:120px;background:#fff;border:1px solid var(--border);border-radius:4px;padding:4px;image-rendering:pixelated">
+          </div>
+        </div>
+      </div>
+
       <!-- QR-Code für Bestenlisten-Einträge -->
       <div class="settings-section">
         <h3>Bestenliste · QR-Code</h3>

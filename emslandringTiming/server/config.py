@@ -48,6 +48,13 @@ _DEFAULTS: dict = {
     # Gäste auf Mobilfunk die URL erreichen können.
     "qr_enabled":                 False,
     "qr_base_url":                "",
+    # Mobile-Mitarbeiter-Ansicht: schlanke Read-Only-Seite für Telefone im
+    # Karthallen-WLAN. Mitarbeiter scannen einen ausgedruckten QR-Code,
+    # bekommen sofort die aktuelle Rangliste/Startaufstellung. Die Base-URL
+    # MUSS aus dem Karthallen-WLAN erreichbar sein (i.d.R. die lokale IP
+    # des Servers, z.B. http://192.168.178.100:8081 – KEINE Tailscale-URL
+    # nötig, da die Mitarbeiter im selben Netz sind).
+    "mobile_base_url":            "",
     # Bestenliste-Modus:
     #   "per_kart" (Standard): pro Kart maximal 1 Eintrag pro Liste –
     #     immer die schnellste Runde des Karts im Zeitraum

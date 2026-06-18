@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -183,6 +183,45 @@ async def index():
 async def dashboard():
     """Read-Only Zuschauer-Dashboard (für Raspberry Pi Kiosk)."""
     return FileResponse(WEB_TEMPLATES / "dashboard.html")
+
+
+@app.get("/mobile")
+async def mobile():
+    """Read-Only Mobile-Ansicht für Mitarbeiter (Startaufstellung, Rangliste)."""
+    return FileResponse(WEB_TEMPLATES / "mobile.html")
+
+
+@app.get("/mobile-qr")
+async def mobile_qr_print():
+    """Druckbare Aushang-Seite mit QR-Code zur Mobile-URL."""
+    return FileResponse(WEB_TEMPLATES / "mobile_qr_print.html")
+
+
+@app.get("/api/mobile-qr")
+async def api_mobile_qr(request: Request):
+    """Liefert einen PNG-QR-Code für die Mobile-Mitarbeiter-Seite.
+
+    Die Ziel-URL kommt aus cfg.mobile_base_url. Falls leer, wird die
+    aktuelle Request-Host-URL genutzt (z.B. wenn der Operator die
+    QR-Seite vom Browser im LAN aufruft).
+    """
+    import segno
+    import io
+    base = (cfg.get().get("mobile_base_url") or "").strip().rstrip("/")
+    if not base:
+        # Fallback: aus dem Request-Header die Host-Origin nehmen.
+        # Funktioniert im LAN wenn der Operator die Seite vom selben
+        # Netz aus aufruft. Schema explizit setzen (Tailscale liefert
+        # http via Funnel; lokales LAN immer http).
+        host = request.headers.get("host", "localhost:8081")
+        scheme = "https" if request.url.scheme == "https" else "http"
+        base = f"{scheme}://{host}"
+    url = f"{base}/mobile"
+    qr = segno.make(url, error="M")
+    buf = io.BytesIO()
+    qr.save(buf, kind="png", scale=10, border=2, dark="#000000", light="#ffffff")
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 # ── Runs API ──────────────────────────────────────────────────────────────────

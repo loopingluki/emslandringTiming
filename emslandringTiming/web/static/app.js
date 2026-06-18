@@ -1599,6 +1599,10 @@ async function loadSettings() {
   if (qrEn)  qrEn.value  = s.qr_enabled ? '1' : '0';
   if (qrUrl) qrUrl.value = s.qr_base_url || '';
 
+  // Mitarbeiter-Mobile URL
+  const mobUrl = document.getElementById('s-mobile-base-url');
+  if (mobUrl) mobUrl.value = s.mobile_base_url || '';
+
   // Bestenliste-Modus
   const bom = document.getElementById('s-bestof-mode');
   if (bom) bom.value = s.bestof_mode || 'per_kart';
@@ -1708,6 +1712,7 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     ampel_relay_green:  +document.getElementById('s-ampel-relay-green').value || 6,
     qr_enabled:         document.getElementById('s-qr-enabled')?.value === '1',
     qr_base_url:       (document.getElementById('s-qr-base-url')?.value || '').trim(),
+    mobile_base_url:   (document.getElementById('s-mobile-base-url')?.value || '').trim(),
     bestof_mode:        document.getElementById('s-bestof-mode')?.value || 'per_kart',
   };
   // Aktuell sichtbare Defekt-Kategorie ins Buffer übernehmen, dann ALLE
@@ -1726,6 +1731,10 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
   state.settings.signal_defect_categories = JSON.parse(JSON.stringify(_sigdefCategoriesEdit));
   // Falls Transponder-Modal offen ist → sofort neu zeichnen mit neuen Schwellwerten
   if (_tdChartData && _tdChartData.length) _redrawTdChart();
+  // Mobile-QR-Vorschau neu laden (URL kann sich geändert haben).
+  // Cache-Buster via Query-Parameter, sonst zeigt der Browser den alten QR.
+  const qrImg = document.getElementById('mobile-qr-preview');
+  if (qrImg) qrImg.src = '/api/mobile-qr?_t=' + Date.now();
   const saved = document.getElementById('settings-saved');
   saved.style.display = '';
   setTimeout(() => saved.style.display = 'none', 2000);

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Mitarbeiter-QR · Emslandring Timing</title>
+<style>
+  @page { size: A4 portrait; margin: 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #111;
+         margin: 0; padding: 24px; background: #fff;
+         display: flex; flex-direction: column; align-items: center;
+         min-height: 100vh; }
+
+  h1 { font-size: 32pt; margin: 0 0 6pt; letter-spacing: 0.02em; text-align: center; }
+  .subtitle { font-size: 14pt; color: #c62828; font-weight: 700;
+              letter-spacing: 0.15em; text-transform: uppercase;
+              margin-bottom: 24pt; text-align: center; }
+
+  .qr-box { padding: 12pt; background: #fff; border: 2px solid #111;
+            margin: 16pt 0; }
+  .qr-box img { display: block; width: 280pt; height: 280pt; image-rendering: pixelated; }
+
+  .url { font-family: 'Courier New', monospace; font-size: 14pt;
+         margin-top: 8pt; padding: 8pt 14pt; background: #f0f0f0;
+         border-radius: 4pt; word-break: break-all; text-align: center; }
+
+  .instructions { margin-top: 32pt; font-size: 12pt; line-height: 1.6;
+                  max-width: 480pt; }
+  .instructions h2 { font-size: 14pt; margin-bottom: 8pt; color: #c62828; }
+  .instructions ol { padding-left: 22pt; }
+  .instructions li { margin-bottom: 4pt; }
+
+  .footer { margin-top: auto; padding-top: 24pt; font-size: 9pt; color: #888;
+            text-align: center; }
+
+  .actions { margin: 20pt 0; }
+  @media screen {
+    body { background: #f5f5f5; }
+    .container { background: #fff; padding: 40pt; box-shadow: 0 4px 20px rgba(0,0,0,.1);
+                 max-width: 600pt; }
+  }
+  @media print {
+    .actions { display: none; }
+  }
+  button { padding: 10pt 24pt; font-size: 14pt; cursor: pointer;
+           background: #c62828; color: #fff; border: none; border-radius: 4pt;
+           font-weight: bold; }
+  button:hover { background: #a01e1e; }
+  .err { padding: 24pt; background: #fff5f5; border: 2px solid #c62828;
+         color: #c62828; border-radius: 6pt; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>STARTAUFSTELLUNG</h1>
+  <div class="subtitle">Mitarbeiter-Zugang · Emslandring Dankern</div>
+
+  <div id="qr-area">
+    <div class="qr-box">
+      <img id="qr-img" src="/api/mobile-qr" alt="QR Code">
+    </div>
+    <div class="url" id="url-text">Lade …</div>
+  </div>
+
+  <div class="actions">
+    <button onclick="window.print()">🖨 Drucken</button>
+  </div>
+
+  <div class="instructions">
+    <h2>Anleitung</h2>
+    <ol>
+      <li>Handy mit dem <b>Karthallen-WLAN</b> verbinden.</li>
+      <li>Kamera-App öffnen und QR-Code scannen.</li>
+      <li>Link öffnen – die aktuelle Startaufstellung erscheint sofort.</li>
+      <li>Oben kann zwischen den Läufen des Tages gewechselt werden.</li>
+    </ol>
+    <p style="margin-top:12pt;color:#666;font-size:10pt">
+      Diese Ansicht ist <b>nur zum Lesen</b>. Änderungen am System (Lauf starten, Pause,
+      Druck) sind nur über den Kabinen-PC möglich.
+    </p>
+  </div>
+
+  <div class="footer">
+    Emslandring Dankern · emslandringTiming · Mitarbeiter-Mobile
+  </div>
+</div>
+
+<script>
+// URL aus Settings holen und im Aushang anzeigen
+fetch('/api/settings').then(r => r.json()).then(s => {
+  const url = (s.mobile_base_url || '').trim() || (location.origin);
+  const target = url.replace(/\/+$/, '') + '/mobile';
+  document.getElementById('url-text').textContent = target;
+}).catch(() => {
+  document.getElementById('url-text').textContent = location.origin + '/mobile';
+});
+
+// QR-Image-Fallback: falls API-Call scheitert (z.B. mobile_base_url leer)
+document.getElementById('qr-img').addEventListener('error', () => {
+  document.getElementById('qr-area').innerHTML =
+    '<div class="err">QR-Code konnte nicht generiert werden.<br>' +
+    'Bitte in den Einstellungen unter „Mitarbeiter-Mobile" eine URL eintragen ' +
+    '(z.B. http://192.168.178.100:8081).</div>';
+});
+</script>
+
+</body>
+</html>
