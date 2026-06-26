@@ -116,6 +116,17 @@ class RaceEngine:
         self.remaining_sec: float = 0.0
         self.elapsed_sec: float = 0.0
 
+        # Wall-clock-basierte Renn-Zeit (statt sleep-basiertem Counting).
+        # _timer_start_wall: Zeitpunkt des letzten Race-Starts (GREEN).
+        # _pause_start_wall: Wenn nicht None, ist das Race pausiert. Beim
+        # Resume wird _timer_start_wall um die Pause-Dauer nach hinten
+        # geschoben, sodass die Wandzeit-Rechnung weiterhin stimmt.
+        # _last_broadcast_elapsed: int-Sekunden des letzten timer_tick
+        # broadcasts (Drosselung auf 1 Hz, da Timer alle 200ms tickt).
+        self._timer_start_wall: float | None = None
+        self._pause_start_wall: float | None = None
+        self._last_broadcast_elapsed: int = -1
+
         self._timer_task: asyncio.Task | None = None
         self._finish_task: asyncio.Task | None = None
         self._finish_start: float = 0.0
@@ -215,6 +226,9 @@ class RaceEngine:
         if self.status != "running":
             return
         self.status = "paused"
+        # Wandzeit-Pause merken – im Resume wird _timer_start_wall um diese
+        # Dauer nach hinten geschoben, damit elapsed weiter synchron bleibt
+        self._pause_start_wall = time.time()
         await self._cancel_timer()
         # Emulator informieren: Wandzeit-Drift gegen Kloft-Anzeige verhindern
         await emulator.pause()
@@ -224,6 +238,12 @@ class RaceEngine:
     async def resume(self) -> None:
         if self.status != "paused":
             return
+        # Wandzeit-Referenz um die Pause-Dauer verschieben, sodass
+        # _timer_loop weiterhin die korrekte elapsed-Zeit liefert
+        if self._pause_start_wall is not None and self._timer_start_wall is not None:
+            pause_duration = time.time() - self._pause_start_wall
+            self._timer_start_wall += pause_duration
+            self._pause_start_wall = None
         self.status = "running"
         # Emulator informieren BEVOR der Timer wieder startet, damit
         # die nächste $F-Zeile sofort wieder synchron ist
@@ -330,15 +350,31 @@ class RaceEngine:
         if ignore_lap:
             return
 
-        # Finish-Flag VOR Broadcast setzen, damit das Kart sofort als „fertig“ im UI erscheint
-        if self.status == "finishing":
-            kart.seen_after_finish = True
-
-        # Broadcast: einzelnes Passing + aktualisierte Tabelle
+        # Sortierte Rangliste – wird gebraucht für:
+        # 1. Leader-Erkennung in waiting_leader (siehe Finish-Flag-Logik unten)
+        # 2. Position im Broadcast
+        # 3. Emulator-Sortierung
         sorted_karts = self._sorted_karts()
+        is_now_leader = bool(sorted_karts) and sorted_karts[0].kart_nr == kart_nr
         position = next(
             (i + 1 for i, k in enumerate(sorted_karts) if k.kart_nr == kart_nr), 0
         )
+
+        # Finish-Flag (= "blau im UI / fertig") setzen.
+        # Regel folgt der Profi-Motorsport-Logik (siehe Doku):
+        #   - waiting_others: jedes erste Crossing eines Karts ist seine
+        #     Schluss-Runde → blau (ignore_lap oben verhindert weitere)
+        #   - waiting_leader: NUR das Kart das durch sein Crossing zum
+        #     neuen Lap-Leader wird bekommt den Flag. Das ist der Karo-
+        #     Flag-Moment der die Transition zu waiting_others auslöst.
+        #     Alle anderen fahren noch weiter ohne als "fertig" markiert
+        #     zu werden (sie können noch ihre Schluss-Runde fahren oder
+        #     den aktuellen Leader noch überholen, falls der crashed).
+        if self.status == "finishing":
+            if self._finish_phase == "waiting_others":
+                kart.seen_after_finish = True
+            elif self._finish_phase == "waiting_leader" and is_now_leader:
+                kart.seen_after_finish = True
 
         # Emulator: bei jedem Passing $J/$G/$H mit aktueller Rangliste senden.
         # Auch Intro-Passings (lap_us is None) werden weitergereicht – die
@@ -391,6 +427,10 @@ class RaceEngine:
     async def _begin_running(self) -> None:
         self.status = "running"
         now = time.time()
+        # Wandzeit-Referenz für driftfreien Timer setzen
+        self._timer_start_wall = now
+        self._pause_start_wall = None
+        self._last_broadcast_elapsed = -1
         await database.update_run(self.run_id, status="running", started_at=now)
 
         mode = self.run["mode"]
@@ -429,18 +469,45 @@ class RaceEngine:
         await self._broadcast_run_list_update()
 
     async def _timer_loop(self) -> None:
+        """Wandzeit-basierter Renn-Timer.
+
+        Berechnet ``elapsed_sec`` und ``remaining_sec`` bei jedem Tick aus
+        der echten Wandzeit (``time.time() - _timer_start_wall``). Damit
+        gibt es keine Drift durch akkumulierte ``asyncio.sleep``-Ungenauigkeit
+        – wichtig damit die Restzeit im UI und an der Kloft-Anzeige (die
+        wall-clock-basiert läuft) IDENTISCH bleiben.
+
+        Pause/Resume werden über ``_timer_start_wall``-Shift abgebildet,
+        siehe pause()/resume() oben.
+        """
         try:
-            while self.remaining_sec > 0 and self.status == "running":
-                await asyncio.sleep(1.0)
+            # 5 Hz Polling für weichen Übergang. Broadcast wird auf 1 Hz
+            # gedrosselt (nur wenn int(elapsed) sich ändert).
+            while self.status == "running":
+                await asyncio.sleep(0.2)
                 if self.status != "running":
                     break
-                self.remaining_sec -= 1.0
-                self.elapsed_sec += 1.0
-                await hub.broadcast({
-                    "type": "timer_tick",
-                    "remaining_sec": int(self.remaining_sec),
-                    "elapsed_sec": int(self.elapsed_sec),
-                })
+                # Authoritativ aus Wandzeit berechnen.
+                # duration jeden Tick frisch lesen, damit adjust_time
+                # während des Rennens sofort wirksam wird.
+                now = time.time()
+                if self._timer_start_wall is None:
+                    # Sicherheitsfallback: sollte nie passieren
+                    self._timer_start_wall = now
+                duration = float(self.run["duration_sec"] if self.run else 0)
+                self.elapsed_sec = max(0.0, now - self._timer_start_wall)
+                self.remaining_sec = max(0.0, duration - self.elapsed_sec)
+                # Broadcast nur bei Sekunden-Wechsel (sonst 5×/s Spam)
+                cur = int(self.elapsed_sec)
+                if cur != self._last_broadcast_elapsed:
+                    self._last_broadcast_elapsed = cur
+                    await hub.broadcast({
+                        "type": "timer_tick",
+                        "remaining_sec": int(self.remaining_sec),
+                        "elapsed_sec": cur,
+                    })
+                if self.remaining_sec <= 0:
+                    break
 
             if self.status == "running" and self.remaining_sec <= 0:
                 await self._trigger_finishing()
