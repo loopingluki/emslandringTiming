@@ -82,7 +82,13 @@ class Emulator:
         self._server: asyncio.Server | None = None
         self._lock = asyncio.Lock()
         self._ticker_task: asyncio.Task | None = None
+        self._sync_task: asyncio.Task | None = None
         self._last_tick_sec: int = -1
+        # Watchdog: Zeitpunkt (float, wall-clock) an dem der letzte $F
+        # tatsächlich raus ging. Wird für den 60s-Force-Refresh genutzt
+        # damit die Kloft-Anzeigetafel auch bei event-loop-Stau garantiert
+        # spätestens alle 60s einen frischen Zeitstempel bekommt.
+        self._last_tick_wall: float = 0.0
 
         # Cache der zuletzt gestarteten Session (bleibt nach session_complete
         # erhalten, damit der Ticker die Post-Finish-Phase korrekt darstellt).
@@ -126,14 +132,19 @@ class Emulator:
         self._ticker_task = asyncio.create_task(
             self._tick_loop(), name="emulator-tick"
         )
+        # Zusätzlicher Watchdog: garantierter Force-Refresh alle 60s
+        self._sync_task = asyncio.create_task(
+            self._sync_loop(), name="emulator-sync"
+        )
 
     async def stop(self) -> None:
-        if self._ticker_task and not self._ticker_task.done():
-            self._ticker_task.cancel()
-            try:
-                await self._ticker_task
-            except asyncio.CancelledError:
-                pass
+        for task in (self._ticker_task, self._sync_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         if self._server:
             self._server.close()
             await self._server.wait_closed()
@@ -201,9 +212,35 @@ class Emulator:
                 if cur > self._last_tick_sec:
                     try:
                         await self._send_tick()
+                        self._last_tick_wall = time.time()
                     except Exception as exc:
                         print(f"[emulator] tick error: {exc}")
                     self._last_tick_sec = cur
+        except asyncio.CancelledError:
+            pass
+
+    async def _sync_loop(self) -> None:
+        """Watchdog: garantiert alle 60s einen $F.
+
+        Läuft parallel zum regulären _tick_loop. Falls der Event-Loop
+        einmal so ausgelastet ist dass mehrere Sekunden-Ticks verschluckt
+        werden (Decoder-Burst, DB-Backup, WeasyPrint-Render, etc.),
+        stellt dieser Loop sicher dass die Kloft-Anzeigetafel spätestens
+        alle 60s einen frischen Zeitstempel bekommt. Wichtig für lange
+        Rennen (3+ Stunden), wo selbst seltene missed-ticks über die
+        Zeit sichtbare Drift auf der Anzeigetafel-Hardware verursachen
+        könnten.
+        """
+        try:
+            while True:
+                await asyncio.sleep(5.0)
+                if time.time() - self._last_tick_wall >= 60.0:
+                    try:
+                        await self._send_tick()
+                        self._last_tick_wall = time.time()
+                        self._last_tick_sec = int(self._last_tick_wall)
+                    except Exception as exc:
+                        print(f"[emulator] sync error: {exc}")
         except asyncio.CancelledError:
             pass
 
@@ -246,7 +283,9 @@ class Emulator:
 
         # ── State → Zeile ────────────────────────────────────────────────────
         if st in ("running", "paused"):
-            cd = max(0, self._duration_sec - el_live)
+            # SINGLE SOURCE OF TRUTH: cd und el kommen direkt aus race_engine,
+            # damit UI und Kloft-Anzeigetafel byte-identisch synchron sind.
+            cd = self._live_remaining_sec()
             line = self._fmt_F(9999, cd, wall, el_live, "GREEN ")
 
         elif st == "armed":
@@ -305,18 +344,42 @@ class Emulator:
         return self._fmt_F_off(wall)
 
     def _live_elapsed_sec(self) -> int:
-        """Wand-zeit-basierte elapsed seit GREEN. Wächst auch dann weiter,
-        wenn race_engine den internen Timer angehalten hat (z.B. nach
-        Countdown=0 in der GP-Overtime-Phase).
+        """Wandzeit-elapsed seit Race-Start (GREEN).
 
-        Bei aktiver Pause friert der Wert ein – beim Resume verschiebt
-        sich _green_wall_time um die Pause-Dauer, sodass keine Drift
-        gegen die echte Restzeit (race_engine) entsteht.
+        LIEST DIREKT aus ``race_engine.engine`` als Single-Source-of-Truth
+        – kein eigener Wall-Clock-Anker mehr. Damit ist die Anzeige
+        garantiert byte-identisch mit dem UI-Timer (unten rechts) und
+        kann nicht driften – egal wie viele Pausen, Adjustments oder
+        wie lange das Rennen läuft.
+
+        Fallback auf eigenes _green_wall_time nur wenn race_engine nicht
+        importierbar (sollte in normaler App nie passieren).
         """
+        try:
+            from race_engine import engine as _eng
+            if _eng.run is not None and _eng._timer_start_wall is not None:
+                return int(_eng.get_live_elapsed())
+        except Exception:
+            pass
+        # Fallback: alte Wall-Clock-Logik falls engine nicht verfügbar
         if self._green_wall_time is None:
             return 0
         ref = self._paused_wall_time if self._paused_wall_time is not None else time.time()
         return max(0, int(ref - self._green_wall_time))
+
+    def _live_remaining_sec(self) -> int:
+        """Wandzeit-Restzeit bis regulärem Race-Ende – identisch zum UI.
+
+        Ebenfalls Single-Source-of-Truth aus race_engine.
+        """
+        try:
+            from race_engine import engine as _eng
+            if _eng.run is not None:
+                return int(_eng.get_live_remaining())
+        except Exception:
+            pass
+        # Fallback aus lokalen Werten
+        return max(0, self._duration_sec - self._live_elapsed_sec())
 
     def _fmt_F(
         self, field1: int, cd_sec: int, wall: str, el_sec: int, status6: str
@@ -414,6 +477,7 @@ class Emulator:
 
         # Ticker für diese Wandzeit-Sekunde unterdrücken (kein Doppel-$F)
         self._last_tick_sec = int(time.time())
+        self._last_tick_wall = time.time()
 
     async def on_passing(
         self,
@@ -441,11 +505,14 @@ class Emulator:
         # ebenso während waiting_others (FINISH-Phase, Karts dürfen einlaufen).
         if engine.status not in ("running", "paused", "finishing"):
             return
-        if self._green_wall_time is None:
-            return
 
-        # Elapsed seit GREEN beim Moment des Passings (in µs)
-        elapsed_us = int((passing_wall_time - self._green_wall_time) * 1_000_000)
+        # Elapsed seit GREEN beim Moment des Passings (in µs).
+        # Bevorzugt aus engine._timer_start_wall (Single Source of Truth),
+        # Fallback auf _green_wall_time falls engine nicht initialisiert.
+        anchor = engine._timer_start_wall if engine._timer_start_wall is not None else self._green_wall_time
+        if anchor is None:
+            return
+        elapsed_us = int((passing_wall_time - anchor) * 1_000_000)
         if elapsed_us < 0:
             elapsed_us = 0
 
@@ -555,6 +622,7 @@ class Emulator:
             f'$F,9999,"00:00:00","{wall}","{_hms(el)}","FINISH"'
         )
         self._last_tick_sec = int(time.time())
+        self._last_tick_wall = time.time()
 
     async def pause(self) -> None:
         """Race-engine hat den Lauf pausiert – Wandzeit-Drift verhindern.

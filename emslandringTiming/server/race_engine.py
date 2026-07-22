@@ -143,6 +143,39 @@ class RaceEngine:
         elapsed = time.time() - self._finish_start
         return max(0, int(self._finish_wait_total - elapsed))
 
+    def get_live_elapsed(self) -> float:
+        """Wandzeit-basierte elapsed-Zeit seit Race-Start (GREEN).
+
+        SINGLE SOURCE OF TRUTH für alle Timer-Anzeigen (UI, Kloft-Emulator).
+        Kein Cache – wird bei jedem Aufruf frisch aus ``time.time()``
+        berechnet.
+
+        Verhalten:
+          * ``_timer_start_wall`` None (kein Race aktiv) → 0
+          * Race pausiert → friert auf dem Zeitpunkt der Pause ein
+          * Race läuft → time.time() - _timer_start_wall
+          * Nach Race-Ende (finishing/done) → wächst weiter über
+            duration_sec hinaus (GP-Overtime-Phase). Erst wenn ein
+            neuer Lauf startet wird _timer_start_wall neu gesetzt.
+        """
+        if self._timer_start_wall is None:
+            return 0.0
+        ref = (self._pause_start_wall
+               if (self.status == "paused" and self._pause_start_wall is not None)
+               else time.time())
+        return max(0.0, ref - self._timer_start_wall)
+
+    def get_live_remaining(self) -> float:
+        """Wandzeit-basierte Restzeit bis zum regulären Race-Ende.
+
+        Passt zu :meth:`get_live_elapsed` – die Summe beider ist immer
+        gleich ``duration_sec`` (bis elapsed die duration erreicht,
+        dann bleibt remaining bei 0).
+        """
+        if not self.run:
+            return 0.0
+        return max(0.0, float(self.run["duration_sec"]) - self.get_live_elapsed())
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def arm(self, run_id: int) -> None:
@@ -481,23 +514,21 @@ class RaceEngine:
         siehe pause()/resume() oben.
         """
         try:
-            # 5 Hz Polling für weichen Übergang. Broadcast wird auf 1 Hz
-            # gedrosselt (nur wenn int(elapsed) sich ändert).
+            # 5 Hz Polling. Broadcast wird auf 1 Hz gedrosselt (nur wenn
+            # int(elapsed) sich ändert). elapsed/remaining kommen aus
+            # get_live_elapsed()/get_live_remaining() – der Single-Source-
+            # of-Truth die auch der Kloft-Emulator liest, sodass UI und
+            # Kloft-Anzeigetafel byte-identisch synchron sind.
+            if self._timer_start_wall is None:
+                # Sicherheitsfallback: sollte nie passieren, da
+                # _begin_running den Wall-Clock-Anker vor dem Timer-Start setzt
+                self._timer_start_wall = time.time()
             while self.status == "running":
                 await asyncio.sleep(0.2)
                 if self.status != "running":
                     break
-                # Authoritativ aus Wandzeit berechnen.
-                # duration jeden Tick frisch lesen, damit adjust_time
-                # während des Rennens sofort wirksam wird.
-                now = time.time()
-                if self._timer_start_wall is None:
-                    # Sicherheitsfallback: sollte nie passieren
-                    self._timer_start_wall = now
-                duration = float(self.run["duration_sec"] if self.run else 0)
-                self.elapsed_sec = max(0.0, now - self._timer_start_wall)
-                self.remaining_sec = max(0.0, duration - self.elapsed_sec)
-                # Broadcast nur bei Sekunden-Wechsel (sonst 5×/s Spam)
+                self.elapsed_sec = self.get_live_elapsed()
+                self.remaining_sec = self.get_live_remaining()
                 cur = int(self.elapsed_sec)
                 if cur != self._last_broadcast_elapsed:
                     self._last_broadcast_elapsed = cur
