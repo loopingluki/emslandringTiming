@@ -441,16 +441,45 @@
         <h3>Drucker</h3>
         <div class="settings-grid">
           <div class="form-group" style="grid-column: 1 / -1">
-            <label>Ausgabedrucker</label>
+            <label>Ausgabedrucker (wird für alle Ausdrucke verwendet)</label>
             <div style="display:flex;gap:6px;align-items:center">
               <select id="s-printer" style="flex:1"></select>
-              <button class="btn" id="btn-printer-refresh" title="Drucker neu suchen">⟳</button>
+              <button class="btn" id="btn-printer-refresh" title="Drucker neu erkennen und Status aktualisieren">⟳ Aktualisieren</button>
             </div>
-            <small style="color:var(--text-muted)">Lokale USB/CUPS-Drucker werden automatisch erkannt. Netzwerkdrucker unten hinzufügen.</small>
           </div>
+
+          <!-- Drucker-Manager: Statusliste mit Aktionen pro Drucker -->
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label style="display:flex;justify-content:space-between;align-items:center">
+              <span>Bekannte Drucker im System</span>
+              <span id="printers-summary" style="font-size:10px;color:var(--text-muted);font-weight:normal">–</span>
+            </label>
+            <div id="printers-manager" style="display:flex;flex-direction:column;gap:6px">
+              <div style="color:var(--text-muted);font-size:12px;padding:8px">Lade …</div>
+            </div>
+          </div>
+
+          <!-- cups-browsed Status + Restart -->
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label style="display:flex;justify-content:space-between;align-items:center">
+              <span>cups-browsed (Auto-Discovery-Dienst)</span>
+              <span id="cups-browsed-status" style="font-size:11px;font-weight:normal">–</span>
+            </label>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button class="btn" id="btn-cups-browsed-restart">🔄 Neu starten</button>
+              <button class="btn btn-red" id="btn-cups-browsed-stop" title="Dauerhaft deaktivieren (empfohlen wenn Drucker direkt per IP eingebunden sind)">⏹ Dauerhaft deaktivieren</button>
+              <small style="color:var(--text-muted);flex:1;min-width:200px">
+                Wenn Drucker plötzlich als „deaktiviert" markiert werden mit
+                Meldung <i>„Printer disappeared"</i> → hier neu starten.
+                Für dauerhaften Betrieb: deaktivieren und Drucker direkt per IP einbinden.
+              </small>
+            </div>
+          </div>
+
           <div class="form-group" style="grid-column: 1 / -1">
             <label>Netzwerkdrucker (je Zeile ein IP:Port oder Hostname)</label>
             <textarea id="s-network-printers" rows="3" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+            <small style="color:var(--text-muted)">Freitext-Erweiterung: hier hinzugefügte Einträge erscheinen zusätzlich im Dropdown oben.</small>
           </div>
           <div class="form-group" style="grid-column: 1 / -1">
             <label>Logo für Ausdruck (PNG)</label>

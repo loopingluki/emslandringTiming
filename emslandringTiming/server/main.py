@@ -342,29 +342,277 @@ async def api_get_settings():
     return c
 
 
-@app.get("/api/printers")
-async def api_printers():
+async def _run_cmd(*args, timeout: float = 5.0) -> tuple[int, str, str]:
+    """Kleiner Wrapper um subprocess mit Timeout + UTF-8-Decoding.
+
+    Returns (returncode, stdout, stderr).
+    """
     import asyncio
-    import shutil
-    printers: list[dict] = []
-    if shutil.which("lpstat"):
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return (proc.returncode or 0,
+                out.decode("utf-8", "ignore"),
+                err.decode("utf-8", "ignore"))
+    except asyncio.TimeoutError:
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "lpstat", "-a",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-            for line in out.decode("utf-8", "ignore").splitlines():
-                name = line.split(" ", 1)[0].strip()
-                if name:
-                    printers.append({"name": name, "kind": "cups"})
+            proc.kill()
         except Exception:
             pass
+        return (124, "", f"Timeout nach {timeout}s")
+    except Exception as e:
+        return (127, "", str(e))
+
+
+async def _cups_browsed_status() -> dict:
+    """Prüft ob cups-browsed installiert und aktiv ist."""
+    import shutil
+    if not shutil.which("systemctl"):
+        return {"available": False, "active": False, "state": "n/a"}
+    rc, out, _ = await _run_cmd("systemctl", "is-active", "cups-browsed", timeout=2.0)
+    state = out.strip() or "unknown"
+    # returncode 3 bedeutet inactive/failed – gültige Antwort, kein Fehler
+    return {
+        "available": True,
+        "active": state == "active",
+        "state": state,
+    }
+
+
+@app.get("/api/printers")
+async def api_printers():
+    """Liefert erweiterte Info je Drucker: state (idle/processing/disabled),
+    reason (bei disabled: warum), jobs_queued (Anzahl wartender Jobs),
+    is_default, accepting. Plus cups-browsed Status.
+    """
+    import shutil
+    import re
+
+    printers_dict: dict[str, dict] = {}
+
+    if shutil.which("lpstat"):
+        # 1) lpstat -a: welche akzeptieren Aufträge
+        rc, out, _ = await _run_cmd("lpstat", "-a", timeout=2.0)
+        if rc == 0:
+            for line in out.splitlines():
+                parts = line.split(None, 1)
+                if not parts:
+                    continue
+                name = parts[0].strip()
+                if not name:
+                    continue
+                # "not accepting" / "nimmt keine Aufträge an"
+                lowered = line.lower()
+                accepting = ("not accepting" not in lowered
+                             and "keine aufträge" not in lowered
+                             and "nimmt keine" not in lowered)
+                printers_dict[name] = {
+                    "name": name,
+                    "kind": "cups",
+                    "accepting": accepting,
+                    "state": "unknown",
+                    "reason": "",
+                    "jobs_queued": 0,
+                    "is_default": False,
+                }
+
+        # 2) lpstat -p -l: Status + Reason (kann über mehrere Zeilen gehen)
+        rc, out, _ = await _run_cmd("lpstat", "-p", "-l", timeout=2.0)
+        if rc == 0:
+            current = None
+            head_re = re.compile(r"^(?:printer|Drucker)\s+(\S+)\s+(.*)$",
+                                 re.IGNORECASE)
+            for raw in out.splitlines():
+                if not raw.strip():
+                    continue
+                # Neue Zeile beginnt mit "printer NAME" oder "Drucker NAME"
+                m = head_re.match(raw)
+                if m:
+                    current = m.group(1).strip()
+                    tail = m.group(2).strip()
+                    p = printers_dict.setdefault(current, {
+                        "name": current, "kind": "cups", "accepting": True,
+                        "state": "unknown", "reason": "",
+                        "jobs_queued": 0, "is_default": False,
+                    })
+                    low = tail.lower()
+                    if "disabled" in low or "deaktiviert" in low:
+                        p["state"] = "disabled"
+                    elif "printing" in low or "druckt" in low:
+                        p["state"] = "processing"
+                    elif "idle" in low or "bereit" in low or "leerlauf" in low:
+                        p["state"] = "idle"
+                    else:
+                        p["state"] = "idle"
+                    # Reason steht oft hinter " - " in derselben Zeile
+                    if " - " in tail:
+                        p["reason"] = tail.split(" - ", 1)[1].strip()
+                    continue
+                # Folgezeile (eingerückt) → Reason ergänzen
+                if current and current in printers_dict:
+                    extra = raw.strip()
+                    if extra:
+                        cur_reason = printers_dict[current].get("reason", "")
+                        printers_dict[current]["reason"] = (
+                            cur_reason + " " + extra if cur_reason else extra
+                        )
+
+        # 3) lpstat -d: System-Default
+        rc, out, _ = await _run_cmd("lpstat", "-d", timeout=2.0)
+        if rc == 0:
+            m = re.search(r"(?:destination|Ziel)[:\s]+(\S+)", out)
+            if m:
+                default_name = m.group(1).strip()
+                if default_name in printers_dict:
+                    printers_dict[default_name]["is_default"] = True
+
+        # 4) lpstat -o: Job-Anzahl pro Drucker
+        rc, out, _ = await _run_cmd("lpstat", "-o", timeout=2.0)
+        if rc == 0:
+            for line in out.splitlines():
+                if not line.strip():
+                    continue
+                # Format: "<PrinterName>-<JobID> user  bytes  date..."
+                first = line.split(None, 1)[0]
+                idx = first.rfind("-")
+                if idx <= 0:
+                    continue
+                pname = first[:idx]
+                if pname in printers_dict:
+                    printers_dict[pname]["jobs_queued"] += 1
+
+    printers = list(printers_dict.values())
+
     # Zusätzlich: Netzwerkdrucker-Freitext (vom Nutzer in Config gepflegt)
     for p in cfg.get().get("network_printers", []) or []:
-        printers.append({"name": p, "kind": "network"})
-    return {"printers": printers, "selected": cfg.get().get("printer", "")}
+        printers.append({
+            "name": p, "kind": "network", "accepting": True,
+            "state": "unknown", "reason": "", "jobs_queued": 0,
+            "is_default": False,
+        })
+
+    return {
+        "printers": printers,
+        "selected": cfg.get().get("printer", ""),
+        "cups_browsed": await _cups_browsed_status(),
+    }
+
+
+def _validate_printer_name(name: str) -> str:
+    """Absicherung gegen Shell-Injection: nur harmlose Zeichen zulassen."""
+    import re
+    if not name or len(name) > 128:
+        raise HTTPException(400, "Ungültiger Druckername")
+    if not re.match(r"^[A-Za-z0-9_.\-]+$", name):
+        raise HTTPException(400, "Druckername enthält unzulässige Zeichen")
+    return name
+
+
+@app.post("/api/printers/{printer_name}/enable")
+async def api_printer_enable(printer_name: str):
+    """Reaktiviert einen deaktivierten Drucker und setzt ihn auf 'accepting'.
+
+    Zwei separate Befehle:
+      cupsenable   – Job-Ausführung wieder erlauben
+      cupsaccept   – Neue Jobs annehmen (falls auch das disabled war)
+    Beide brauchen lpadmin-Gruppe (siehe docs/PRINTER_SETUP.md).
+    """
+    _validate_printer_name(printer_name)
+    errors = []
+    for cmd in (["cupsenable", printer_name], ["cupsaccept", printer_name]):
+        rc, _, err = await _run_cmd(*cmd, timeout=5.0)
+        if rc != 0:
+            errors.append(f"{cmd[0]}: {err.strip() or f'rc={rc}'}")
+    if errors:
+        raise HTTPException(500, "; ".join(errors))
+    return {"ok": True}
+
+
+@app.post("/api/printers/{printer_name}/clear-jobs")
+async def api_printer_clear_jobs(printer_name: str):
+    """Löscht alle wartenden Jobs eines Druckers."""
+    _validate_printer_name(printer_name)
+    rc, _, err = await _run_cmd("cancel", "-a", "-P", printer_name, timeout=5.0)
+    if rc != 0:
+        raise HTTPException(500, err.strip() or f"cancel rc={rc}")
+    return {"ok": True}
+
+
+@app.post("/api/printers/{printer_name}/set-default")
+async def api_printer_set_default(printer_name: str):
+    """Setzt den Drucker als System-Default in CUPS.
+
+    Zusätzlich wird er in emslandringTiming als aktueller Drucker
+    gespeichert damit alle Ausdrucke sofort dorthin gehen.
+    """
+    _validate_printer_name(printer_name)
+    rc, _, err = await _run_cmd("lpadmin", "-d", printer_name, timeout=5.0)
+    if rc != 0:
+        raise HTTPException(500, err.strip() or f"lpadmin rc={rc}")
+    # Auch in unserer Config setzen
+    cfg.save({"printer": printer_name})
+    return {"ok": True}
+
+
+@app.delete("/api/printers/{printer_name}")
+async def api_printer_delete(printer_name: str):
+    """Entfernt einen Drucker komplett aus CUPS (löscht auch alle
+    Warteschlangen-Jobs). Praktisch für alte Auto-Discovery-Reste die
+    nicht mehr existieren.
+    """
+    _validate_printer_name(printer_name)
+    # Erst Jobs löschen, damit lpadmin -x sauber durchgeht
+    await _run_cmd("cancel", "-a", "-P", printer_name, timeout=5.0)
+    rc, _, err = await _run_cmd("lpadmin", "-x", printer_name, timeout=5.0)
+    if rc != 0:
+        raise HTTPException(500, err.strip() or f"lpadmin -x rc={rc}")
+    # Falls dieser Drucker in unserer Config als Aktueller stand → leeren
+    if cfg.get().get("printer") == printer_name:
+        cfg.save({"printer": ""})
+    return {"ok": True}
+
+
+@app.post("/api/printers/cups-browsed/restart")
+async def api_cups_browsed_restart():
+    """Startet den cups-browsed Service neu.
+
+    Braucht sudoers-Regel (siehe docs/PRINTER_SETUP.md):
+      server ALL=(root) NOPASSWD: /bin/systemctl restart cups-browsed
+    """
+    rc, _, err = await _run_cmd(
+        "sudo", "-n", "systemctl", "restart", "cups-browsed", timeout=10.0
+    )
+    if rc != 0:
+        raise HTTPException(
+            500,
+            err.strip() or
+            "cups-browsed konnte nicht neu gestartet werden. "
+            "Prüfe ob die sudoers-Regel gesetzt ist – siehe docs/PRINTER_SETUP.md."
+        )
+    return {"ok": True}
+
+
+@app.post("/api/printers/cups-browsed/stop")
+async def api_cups_browsed_stop():
+    """Deaktiviert cups-browsed dauerhaft. Empfohlen wenn Drucker fest
+    per IP eingebunden sind – dann verursacht cups-browsed keine
+    Auto-Disable-Fehler mehr.
+    """
+    for action in ("disable", "stop"):
+        rc, _, err = await _run_cmd(
+            "sudo", "-n", "systemctl", action, "cups-browsed", timeout=10.0
+        )
+        if rc != 0:
+            raise HTTPException(
+                500,
+                f"cups-browsed {action}: {err.strip() or f'rc={rc}'} "
+                "(sudoers-Regel prüfen – siehe docs/PRINTER_SETUP.md)"
+            )
+    return {"ok": True}
 
 
 @app.post("/api/settings")

@@ -1612,17 +1612,185 @@ async function loadSettings() {
 
 async function loadPrinters(selected) {
   const sel = document.getElementById('s-printer');
+  const mgr = document.getElementById('printers-manager');
+  const summary = document.getElementById('printers-summary');
+  const cupsStat = document.getElementById('cups-browsed-status');
   if (!sel) return;
+
+  let data;
   try {
-    const data = await fetch('/api/printers').then(r => r.json());
-    const current = selected != null ? selected : data.selected;
-    sel.innerHTML = '<option value="">– kein Drucker –</option>' +
-      (data.printers || []).map(p =>
-        `<option value="${p.name}" ${p.name === current ? 'selected' : ''}>${p.name} (${p.kind})</option>`
-      ).join('');
+    data = await fetch('/api/printers').then(r => r.json());
   } catch(_) {
     sel.innerHTML = '<option value="">(Fehler beim Laden)</option>';
+    if (mgr) mgr.innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px">Konnte Drucker-Info nicht laden.</div>';
+    return;
   }
+
+  const current = selected != null ? selected : data.selected;
+  const printers = data.printers || [];
+
+  // Dropdown befüllen
+  sel.innerHTML = '<option value="">– kein Drucker –</option>' +
+    printers.map(p => {
+      const stateEmoji = _printerStateEmoji(p);
+      return `<option value="${escHtml(p.name)}" ${p.name === current ? 'selected' : ''}>${stateEmoji} ${escHtml(p.name)} (${p.kind})</option>`;
+    }).join('');
+
+  // Manager-Kachel pro Drucker rendern
+  if (mgr) renderPrinterManager(mgr, printers);
+
+  // Summary (Anzahl bereit / disabled / Jobs)
+  if (summary) {
+    const ready = printers.filter(p => p.state === 'idle' || p.state === 'processing').length;
+    const disabled = printers.filter(p => p.state === 'disabled').length;
+    const jobs = printers.reduce((s, p) => s + (p.jobs_queued || 0), 0);
+    summary.textContent = `${ready} bereit · ${disabled} deaktiviert · ${jobs} Jobs offen`;
+  }
+
+  // cups-browsed Status-Badge
+  if (cupsStat && data.cups_browsed) {
+    const cb = data.cups_browsed;
+    if (!cb.available) {
+      cupsStat.innerHTML = '<span style="color:var(--text-muted)">nicht installiert</span>';
+    } else if (cb.active) {
+      cupsStat.innerHTML = '<span style="color:var(--green)">🟢 läuft</span>';
+    } else {
+      cupsStat.innerHTML = `<span style="color:var(--yellow)">⚠ ${escHtml(cb.state)}</span>`;
+    }
+  }
+}
+
+function _printerStateEmoji(p) {
+  if (p.state === 'idle')       return '🟢';
+  if (p.state === 'processing') return '🖨';
+  if (p.state === 'disabled')   return '🔴';
+  if (p.kind === 'network')     return '🌐';
+  return '⚪';
+}
+
+function _printerStateBadge(p) {
+  const map = {
+    idle:       {bg:'rgba(63,185,80,.15)',  fg:'var(--green)',  txt:'bereit'},
+    processing: {bg:'rgba(63,185,80,.15)',  fg:'var(--green)',  txt:'druckt'},
+    disabled:   {bg:'rgba(248,81,73,.15)',  fg:'var(--red)',    txt:'deaktiviert'},
+    unknown:    {bg:'rgba(139,148,158,.15)',fg:'var(--text-dim)',txt:'unbekannt'},
+  };
+  const c = map[p.state] || map.unknown;
+  return `<span style="background:${c.bg};color:${c.fg};padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">${c.txt}</span>`;
+}
+
+function renderPrinterManager(container, printers) {
+  if (!printers.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px">Keine Drucker gefunden. Verbinde einen Drucker (USB oder Netzwerk) und drücke „Aktualisieren".</div>';
+    return;
+  }
+
+  container.innerHTML = printers.map(p => {
+    const badge = _printerStateBadge(p);
+    const defaultBadge = p.is_default
+      ? '<span style="background:rgba(88,166,255,.15);color:#58a6ff;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Standard</span>'
+      : '';
+    const kindBadge = p.kind === 'network'
+      ? '<span style="background:var(--bg2);color:var(--text-dim);padding:2px 8px;border-radius:8px;font-size:10px">Netzwerk</span>'
+      : '';
+    const jobsInfo = p.jobs_queued > 0
+      ? `<span style="color:var(--yellow);font-size:11px">📋 ${p.jobs_queued} Jobs</span>`
+      : '';
+    const reason = p.reason && p.state === 'disabled'
+      ? `<div style="margin-top:4px;font-size:11px;color:var(--text-muted);font-style:italic">„${escHtml(p.reason)}"</div>`
+      : '';
+
+    // Aktions-Buttons: Reaktivieren nur wenn disabled, Jobs löschen nur wenn Jobs
+    const btnEnable = p.state === 'disabled' && p.kind === 'cups'
+      ? `<button class="btn btn-sm" data-act="enable" data-printer="${escHtml(p.name)}">🔄 Reaktivieren</button>`
+      : '';
+    const btnClear = p.jobs_queued > 0 && p.kind === 'cups'
+      ? `<button class="btn btn-sm" data-act="clear-jobs" data-printer="${escHtml(p.name)}">🗑 Jobs löschen</button>`
+      : '';
+    const btnDefault = !p.is_default && p.kind === 'cups'
+      ? `<button class="btn btn-sm" data-act="set-default" data-printer="${escHtml(p.name)}">⭐ Als Standard</button>`
+      : '';
+    const btnDelete = p.kind === 'cups'
+      ? `<button class="btn btn-sm btn-red" data-act="delete" data-printer="${escHtml(p.name)}" title="Drucker komplett aus CUPS entfernen">❌ Entfernen</button>`
+      : '';
+
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-weight:600;font-size:13px">${_printerStateEmoji(p)} ${escHtml(p.name)}</span>
+        ${badge}
+        ${defaultBadge}
+        ${kindBadge}
+        ${jobsInfo}
+      </div>
+      ${reason}
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        ${btnEnable}${btnClear}${btnDefault}${btnDelete}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Aktions-Handler
+  container.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.dataset.act;
+      const name = btn.dataset.printer;
+      await _runPrinterAction(btn, act, name);
+    });
+  });
+}
+
+async function _runPrinterAction(btn, act, name) {
+  // Bestätigungs-Dialoge für destruktive Aktionen
+  if (act === 'delete' && !confirm(`Drucker „${name}" wirklich komplett aus CUPS entfernen?\n\nAlle Jobs in der Warteschlange werden ebenfalls gelöscht.`)) return;
+  if (act === 'clear-jobs' && !confirm(`Alle wartenden Jobs von „${name}" löschen?`)) return;
+
+  const url = act === 'delete'
+    ? `/api/printers/${encodeURIComponent(name)}`
+    : `/api/printers/${encodeURIComponent(name)}/${act}`;
+  const method = act === 'delete' ? 'DELETE' : 'POST';
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ …';
+  try {
+    const res = await fetch(url, { method });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    if (typeof showToast === 'function') showToast('OK', 'ok');
+  } catch(e) {
+    if (typeof showToast === 'function') showToast('Fehler: ' + e.message, 'err');
+    else alert('Fehler: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = original;
+    return;
+  }
+  // Nach jeder Aktion Liste neu laden (Status kann sich geändert haben)
+  await loadPrinters();
+}
+
+// cups-browsed Aktionen
+async function _cupsBrowsedAction(action, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  try {
+    const res = await fetch(`/api/printers/cups-browsed/${action}`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    if (typeof showToast === 'function') showToast('OK', 'ok');
+    await loadPrinters();
+  } catch(e) {
+    if (typeof showToast === 'function') showToast('Fehler: ' + e.message, 'err');
+    else alert('Fehler: ' + e.message);
+  }
+}
+
+// HTML-Escape (falls escHtml noch nicht existiert im Scope)
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // Theme + Zoom live anwenden
@@ -1653,6 +1821,15 @@ document.getElementById('btn-unlock-hw').addEventListener('click', () => {
 });
 
 document.getElementById('btn-printer-refresh').addEventListener('click', () => loadPrinters());
+document.getElementById('btn-cups-browsed-restart')?.addEventListener('click', () =>
+  _cupsBrowsedAction('restart', 'cups-browsed neu starten? Kann kurz zu einer Unterbrechung führen.'));
+document.getElementById('btn-cups-browsed-stop')?.addEventListener('click', () =>
+  _cupsBrowsedAction('stop',
+    'cups-browsed DAUERHAFT deaktivieren?\n\n' +
+    'Empfohlen wenn alle Drucker fest per IP eingerichtet sind. Dann ' +
+    'gibt es keine „Auto-Disable"-Fehler mehr. Das Setup erfordert dass ' +
+    'die Drucker manuell hinzugefügt wurden (siehe docs/PRINTER_SETUP.md).\n\n' +
+    'Fortfahren?'));
 
 // Logo-Upload
 document.getElementById('btn-logo-upload').addEventListener('click', () => {
