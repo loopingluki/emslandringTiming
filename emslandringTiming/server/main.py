@@ -621,11 +621,23 @@ async def api_save_settings(body: dict):
     old = cfg.get()
     ip_changed   = body.get("decoder_ip")   != old.get("decoder_ip")
     port_changed = body.get("decoder_port") != old.get("decoder_port")
+    printer_changed = ("printer" in body
+                       and body.get("printer") != old.get("printer"))
     cfg.save(body)
     if ip_changed or port_changed:
         await decoder.stop()
         c = cfg.get()
         decoder.start(c["decoder_ip"], c["decoder_port"])
+    # Drucker-Auswahl im Dropdown = auch CUPS-System-Default. So bleibt
+    # System und App synchron und der Operator hat nur eine Stelle zum
+    # Umstellen (das Dropdown). Silent-Fail wenn lpadmin nicht klappt –
+    # die App-Auswahl in config.json ist die primäre Quelle, CUPS-Default
+    # ist nur ein Sync-Zusatz.
+    new_printer = (body.get("printer") or "").strip()
+    if printer_changed and new_printer:
+        import re
+        if re.match(r"^[A-Za-z0-9_.\-]+$", new_printer):
+            await _run_cmd("lpadmin", "-d", new_printer, timeout=3.0)
     return {"ok": True}
 
 

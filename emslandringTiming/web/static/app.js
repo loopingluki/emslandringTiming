@@ -1687,9 +1687,6 @@ function renderPrinterManager(container, printers) {
 
   container.innerHTML = printers.map(p => {
     const badge = _printerStateBadge(p);
-    const defaultBadge = p.is_default
-      ? '<span style="background:rgba(88,166,255,.15);color:#58a6ff;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Standard</span>'
-      : '';
     const kindBadge = p.kind === 'network'
       ? '<span style="background:var(--bg2);color:var(--text-dim);padding:2px 8px;border-radius:8px;font-size:10px">Netzwerk</span>'
       : '';
@@ -1700,15 +1697,15 @@ function renderPrinterManager(container, printers) {
       ? `<div style="margin-top:4px;font-size:11px;color:var(--text-muted);font-style:italic">„${escHtml(p.reason)}"</div>`
       : '';
 
-    // Aktions-Buttons: Reaktivieren nur wenn disabled, Jobs löschen nur wenn Jobs
+    // Aktions-Buttons: Reaktivieren nur wenn disabled, Jobs löschen nur wenn Jobs.
+    // Kein "Als Standard"-Button mehr – der CUPS-Default wird automatisch
+    // aus dem Dropdown "Ausgabedrucker" oben synchronisiert (siehe
+    // api_save_settings im Backend).
     const btnEnable = p.state === 'disabled' && p.kind === 'cups'
       ? `<button class="btn btn-sm" data-act="enable" data-printer="${escHtml(p.name)}">🔄 Reaktivieren</button>`
       : '';
     const btnClear = p.jobs_queued > 0 && p.kind === 'cups'
       ? `<button class="btn btn-sm" data-act="clear-jobs" data-printer="${escHtml(p.name)}">🗑 Jobs löschen</button>`
-      : '';
-    const btnDefault = !p.is_default && p.kind === 'cups'
-      ? `<button class="btn btn-sm" data-act="set-default" data-printer="${escHtml(p.name)}">⭐ Als Standard</button>`
       : '';
     const btnDelete = p.kind === 'cups'
       ? `<button class="btn btn-sm btn-red" data-act="delete" data-printer="${escHtml(p.name)}" title="Drucker komplett aus CUPS entfernen">❌ Entfernen</button>`
@@ -1718,13 +1715,12 @@ function renderPrinterManager(container, printers) {
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-weight:600;font-size:13px">${_printerStateEmoji(p)} ${escHtml(p.name)}</span>
         ${badge}
-        ${defaultBadge}
         ${kindBadge}
         ${jobsInfo}
       </div>
       ${reason}
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-        ${btnEnable}${btnClear}${btnDefault}${btnDelete}
+        ${btnEnable}${btnClear}${btnDelete}
       </div>
     </div>`;
   }).join('');
