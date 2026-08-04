@@ -15,11 +15,10 @@ _DEFAULTS: dict = {
     "gp_laps_count": 15,
     "wait_time_sec": 60,
     "wait_time_gp_sec": 120,
-    # Safety-Timeout für GP-waiting_leader-Phase. Nach Time-Up läuft das
-    # Race frei weiter bis der dynamische Leader die Linie kreuzt. Falls
-    # alle Karts crashen oder ein Software-Fehler vorliegt, würde sonst
-    # endlos gewartet werden. Default 10 Min – nach Ablauf wird das Race
-    # mit dem aktuellen Stand finalisiert.
+    # DEPRECATED: früher Safety-Timeout für die alte "waiting_leader"-Phase.
+    # Mit der neuen strict-finished-linear-Regel gibt es diese Phase nicht
+    # mehr; wait_time_gp_sec ist der einzige Safety-Timer. Feld bleibt für
+    # Backward-Compat in bestehenden config.json Dateien, wird ignoriert.
     "wait_time_gp_leader_max_sec": 600,
     "firebase_credentials": "",
     "printer": "default",

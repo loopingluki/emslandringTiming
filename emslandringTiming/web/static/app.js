@@ -777,7 +777,7 @@ function renderKartTable() {
   tbody.innerHTML = state.karts.map(k => {
     const posClass  = k.position <= 3 ? `pos-${k.position}` : '';
     const sc        = sigClass(k.strength, noise);
-    const finishCls = isFinishing && k.seen_after_finish ? 'finished' : '';
+    const finishCls = isFinishing && k.finished ? 'finished' : '';
 
     // GP: Abstand zum Führenden
     let gapText = '';
