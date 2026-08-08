@@ -389,16 +389,26 @@ class RaceEngine:
             (i + 1 for i, k in enumerate(sorted_karts) if k.kart_nr == kart_nr), 0
         )
 
-        # Strict finished-linear: ein Kart wird "finished" (blau) NUR wenn
-        # alle Karts vor ihm in der Rangliste bereits finished sind. Das
-        # verhindert dass jemand als P1 markiert wird der noch überholt
-        # werden kann. Wenn nach diesem Crossing alle Karts finished sind
-        # → Rennen sofort beenden (nicht auf Safety-Timer warten).
+        # Finish-Flag (= blau im UI, "letzte Runde absolviert") setzen.
+        # Zwei Modi mit unterschiedlicher Regel:
+        #  - Training: jedes erste Crossing nach Time-Up markiert das Kart
+        #    als fertig (Operator sieht wie viele Schlussrunden schon
+        #    eingeloggt wurden). Weitere Crossings zählen normal weiter,
+        #    das Kart bleibt aber finished (idempotent).
+        #  - Grand Prix: strict "finished-linear" – Kart wird nur fertig
+        #    wenn ALLE vor ihm im Ranking bereits finished sind
+        #    (Sieger-Schutz gegen Hinterlieger als P1).
+        # In beiden Modi: wenn nach diesem Crossing alle bekannten Karts
+        # finished sind → Rennen sofort beenden (nicht auf Safety-Timer
+        # warten). Das spart im Training echten Kunden-Fahrzeit.
         newly_finished = False
-        if (self.status == "finishing"
-                and self.run
-                and self.run["mode"] in ("gp_time", "gp_laps")):
-            newly_finished = await self._try_mark_finished(kart_nr)
+        if self.status == "finishing" and self.run:
+            mode = self.run["mode"]
+            if mode in ("gp_time", "gp_laps"):
+                newly_finished = await self._try_mark_finished(kart_nr)
+            elif mode == "training" and not kart.finished:
+                kart.finished = True
+                newly_finished = True
 
         # Emulator: bei jedem Passing $J/$G/$H mit aktueller Rangliste senden.
         # Auch Intro-Passings (lap_us is None) werden weitergereicht – die
