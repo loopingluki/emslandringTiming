@@ -759,7 +759,9 @@ class RaceEngine:
         ``gap_us`` ist:
           * ``0`` für den Führenden
           * positiver µs-Wert für Karts mit gleicher Rundenzahl wie der
-            Führende (``total_us - leader_total_us``)
+            Führende: Wall-Clock-Delta beim letzten Crossing (matcht
+            die Sort-Reihenfolge – "wie viele Sekunden nach dem Leader
+            an der Linie")
           * ``None`` für Karts mit weniger Runden (Rundenrückstand wird
             statt einem Zeitabstand angezeigt)
         """
@@ -767,13 +769,13 @@ class RaceEngine:
         is_gp = mode in ("gp_time", "gp_laps")
 
         result: list[dict] = []
-        leader_total: int | None = None
+        leader_last_ts: float | None = None
         leader_laps: int | None = None
         for i, k in enumerate(sorted_karts):
             d = k.to_dict(i + 1)
             if is_gp:
                 if i == 0 and k.laps > 0:
-                    leader_total = d["total_us"]
+                    leader_last_ts = k.last_passing_ts
                     leader_laps = k.laps
                 if i == 0:
                     d["gap_us"] = 0
@@ -782,7 +784,8 @@ class RaceEngine:
                     d["gap_us"] = None
                     d["gap_laps"] = None
                 elif k.laps == leader_laps:
-                    d["gap_us"] = max(0, d["total_us"] - (leader_total or 0))
+                    delta_s = (k.last_passing_ts - (leader_last_ts or 0))
+                    d["gap_us"] = max(0, int(delta_s * 1_000_000))
                     d["gap_laps"] = 0
                 else:
                     d["gap_us"] = None

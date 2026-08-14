@@ -133,7 +133,7 @@ async def _gather_run_data(run_id: int) -> dict:
             "kart_nr": knr, "transponder_id": p["transponder_id"],
             "name": kart_names.get(knr) or cfg.get_kart_name(p["transponder_id"]),
             "class": (cfg.get_kart_info(p["transponder_id"]) or {}).get("class", ""),
-            "laps": [], "first_ts_us": None,
+            "laps": [], "first_ts_us": None, "last_ts_us": None,
             "best_passing_id": None,
         })
         if p["lap_time_us"]:
@@ -148,6 +148,14 @@ async def _gather_run_data(run_id: int) -> dict:
                 k["best_passing_id"] = p["id"]
         k["first_ts_us"] = (p["timestamp_us"] if k["first_ts_us"] is None
                             else min(k["first_ts_us"], p["timestamp_us"]))
+        # letzter GEWERTETER Crossing (lap_time_us NOT NULL) für den
+        # GP-Wall-Clock-Tiebreaker. Intro-Passings (lap_time_us NULL)
+        # dürfen hier NICHT einfließen – sonst würden Karts mit sehr
+        # spätem Intro-Passing (Rückständler beim Start) einen künst-
+        # lichen Positions-Vorteil bekommen, exakt der alte Bug.
+        if p["lap_time_us"]:
+            k["last_ts_us"] = (p["timestamp_us"] if k["last_ts_us"] is None
+                               else max(k["last_ts_us"], p["timestamp_us"]))
     for k in karts.values():
         laps = k["laps"]
         k["lap_count"] = len(laps)
@@ -167,20 +175,41 @@ async def _gather_run_data(run_id: int) -> dict:
             key=lambda k: (k["best_us"] is None, k["best_us"] or 10**18),
         )
     else:
-        # Grand Prix: meiste Runden, dann geringste Gesamtzeit
+        # Grand Prix: meiste Runden zuerst, dann Wall-Clock-Reihenfolge
+        # des LETZTEN Crossings (früher an der Linie = besser). Analog
+        # zur Live-UI die last_passing_ts (time.time()) nutzt – hier
+        # verwenden wir den Decoder-Timestamp des letzten gewerteten
+        # Passings, der innerhalb eines Laufs strikt monoton ist und
+        # dieselbe Ordnung liefert.
+        # NICHT mehr total_us: das hat Karts mit späterem Intro-Passing
+        # (Rückständler beim Start) unfair bevorzugt – Bug vom
+        # 2026-08-01 Lauf 23 (Kart 32) und 2026-08-14 Lauf 26 (Kart 35).
         ranked = sorted(
             karts.values(),
             key=lambda k: (-k["lap_count"],
-                           k["total_us"] if k["lap_count"] else 10**18),
+                           k["last_ts_us"] if k["lap_count"] else 10**18),
         )
-    leader_total = ranked[0]["total_us"] if ranked and ranked[0]["lap_count"] else None
+    # Abstand zum Führenden. Für GP: Wall-Clock-Delta beim letzten
+    # gewerteten Crossing (my_last - leader_last) – matcht die Sort-
+    # Reihenfolge und gibt "wie viele Sekunden nach dem Sieger im
+    # Ziel". Für Training: total_us-Delta (kumulative Zeit) bleibt
+    # sinnvoll da hier "beste Runde" sortiert wird.
+    is_gp = mode in ("gp_time", "gp_laps")
+    leader = ranked[0] if ranked and ranked[0]["lap_count"] else None
+    leader_last_ts = leader["last_ts_us"] if leader else None
+    leader_total   = leader["total_us"]   if leader else None
     for pos, k in enumerate(ranked, 1):
         k["position"] = pos
-        k["delta_us"] = (
-            k["total_us"] - leader_total
-            if leader_total and k["lap_count"] == ranked[0]["lap_count"] and pos > 1
-            else (0 if pos == 1 else None)
-        )
+        if pos == 1:
+            k["delta_us"] = 0
+        elif not leader or k["lap_count"] != leader["lap_count"]:
+            k["delta_us"] = None
+        elif is_gp and leader_last_ts and k.get("last_ts_us"):
+            k["delta_us"] = k["last_ts_us"] - leader_last_ts
+        elif leader_total is not None:
+            k["delta_us"] = k["total_us"] - leader_total
+        else:
+            k["delta_us"] = None
     return {"run": run, "karts_by_nr": karts, "ranked": ranked}
 
 
