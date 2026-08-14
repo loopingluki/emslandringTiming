@@ -132,6 +132,12 @@ async def get_run_with_karts(run_id: int) -> dict | None:
                 "lap_times_us": [],
                 "strength": p["strength"] or 0,
                 "last_passing_ts": p["timestamp_us"] / 1_000_000,
+                # last_lap_ts: nur GEWERTETE Runden zählen als "letztes
+                # Crossing" für den GP-Wall-Clock-Tiebreaker. Intro-
+                # Passings dürfen nicht rein sonst könnte ein Kart mit
+                # spätem Intro (Rückständler beim Start) unfair vorne
+                # landen. Identische Regel wie in printer.py.
+                "last_lap_ts": None,
             }
         k = karts[kart_nr]
         k["strength"] = p["strength"] or 0
@@ -140,6 +146,7 @@ async def get_run_with_karts(run_id: int) -> dict | None:
             k["laps"] += 1
             k["lap_times_us"].append(p["lap_time_us"])
             k["last_us"] = p["lap_time_us"]
+            k["last_lap_ts"] = p["timestamp_us"] / 1_000_000
             if k["best_us"] is None or p["lap_time_us"] < k["best_us"]:
                 k["best_us"] = p["lap_time_us"]
 
@@ -157,7 +164,13 @@ def _sort_karts(karts: list[dict], mode: str) -> list[dict]:
             karts,
             key=lambda k: (k["best_us"] is None, k["best_us"] or 0),
         )
+    # GP: meiste Runden, dann Wall-Clock des letzten GEWERTETEN
+    # Crossings (früher an der Linie = besser). Identisch zur Live-UI
+    # (race_engine._sorted_karts) und printer.py – NICHT mehr
+    # sum(lap_times_us), das hat Karts mit späterem Intro-Passing
+    # unfair bevorzugt (Bug 2026-08-01 Kart 32, 2026-08-14 Kart 35).
     return sorted(
         karts,
-        key=lambda k: (-k["laps"], k["lap_times_us"] and sum(k["lap_times_us"]) or 0),
+        key=lambda k: (-k["laps"],
+                       k["last_lap_ts"] if k.get("last_lap_ts") else float("inf")),
     )
