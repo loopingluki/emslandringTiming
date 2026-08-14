@@ -170,14 +170,24 @@
   }
 
   // Test-Button: spielt IMMER (auch wenn per-Event disabled), aber
-  // respektiert Mute + Master-Volume. Löst gleichzeitig Autoplay-Unlock aus.
+  // respektiert Mute + Master-Volume. Löst gleichzeitig Autoplay-Unlock
+  // aus – da ctx.resume() async ist wird der Ton NACH dem resume
+  // gespielt, sonst würde der erste Klick nichts hören lassen weil der
+  // AudioContext noch 'suspended' ist wenn play() feuert.
   function preview(event) {
-    unlock();
-    if (!isReady()) return;
-    if (state.config.muted) return;
     const s = SOUNDS[event];
     if (!s) return;
-    try { s.play(); } catch (e) { console.warn('[sound] preview failed:', e); }
+    const doPlay = () => {
+      if (state.config.muted) return;
+      try { s.play(); } catch (e) { console.warn('[sound] preview failed:', e); }
+    };
+    if (!ctx) init();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => { updateLockedBadge(); doPlay(); }, () => {});
+    } else {
+      doPlay();
+    }
   }
 
   // Autoplay-Unlock: erster Klick/Tastendruck irgendwo auf der Seite.

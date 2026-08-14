@@ -498,38 +498,37 @@
 
       <div class="settings-section">
         <h3>🔊 Sounds</h3>
-        <div id="sound-locked-badge" style="display:none;padding:6px 10px;background:#fc0;color:#000;border-radius:4px;font-size:12px;margin-bottom:10px">
-          🔇 Sounds gesperrt — irgendwo auf die Seite klicken um zu aktivieren (Browser-Autoplay-Schutz)
+        <div id="sound-locked-badge" style="display:none;padding:6px 10px;background:#fc0;color:#000;border-radius:4px;font-size:12px;margin-bottom:12px">
+          🔇 Sounds gesperrt — irgendwo auf die Seite klicken um zu aktivieren
         </div>
-        <div class="settings-grid">
-          <div class="form-group" style="grid-column:1/-1">
-            <label style="display:flex;align-items:center;gap:10px">
-              <span style="min-width:130px">Master-Lautstärke</span>
-              <input type="range" id="s-sound-volume" min="0" max="100" step="5" value="70" style="flex:1;max-width:300px">
-              <span id="s-sound-volume-val" style="min-width:44px;text-align:right;font-family:monospace">70%</span>
-            </label>
+
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+          <label for="s-sound-volume" style="min-width:120px;font-size:12px;color:var(--text-dim)">Master-Lautstärke</label>
+          <input type="range" id="s-sound-volume" min="0" max="100" step="5" value="70" style="flex:1;min-width:180px;max-width:280px">
+          <span id="s-sound-volume-val" style="min-width:44px;text-align:right;font-family:monospace;font-size:12px">70%</span>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="s-sound-muted"> Alle Sounds stumm
+          </label>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="checkbox" id="s-sound-print-sent" style="flex:0 0 auto">
+            <label for="s-sound-print-sent" style="flex:1;font-size:12px;cursor:pointer">Druck gesendet</label>
+            <button type="button" class="btn" data-sound-preview="print_sent" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
-          <div class="form-group" style="grid-column:1/-1">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="s-sound-muted"> Alle Sounds stumm
-            </label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="checkbox" id="s-sound-orphan-passing" style="flex:0 0 auto">
+            <label for="s-sound-orphan-passing" style="flex:1;font-size:12px;cursor:pointer">Transponder ohne aktiven Lauf</label>
+            <button type="button" class="btn" data-sound-preview="orphan_passing" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
-          <div class="form-group" style="grid-column:1/-1;display:flex;flex-direction:column;gap:6px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="s-sound-print-sent">
-              <span style="flex:1">Druck gesendet</span>
-              <button type="button" class="btn" data-sound-preview="print_sent" style="font-size:11px">▶ Test</button>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="s-sound-orphan-passing">
-              <span style="flex:1">Transponder ohne aktiven Lauf</span>
-              <button type="button" class="btn" data-sound-preview="orphan_passing" style="font-size:11px">▶ Test</button>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="s-sound-gp-last-minute">
-              <span style="flex:1">Grand Prix letzte Minute (&lt; 60s)</span>
-              <button type="button" class="btn" data-sound-preview="gp_last_minute" style="font-size:11px">▶ Test</button>
-            </label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="checkbox" id="s-sound-gp-last-minute" style="flex:0 0 auto">
+            <label for="s-sound-gp-last-minute" style="flex:1;font-size:12px;cursor:pointer">Grand Prix letzte Minute (&lt; 60s)</label>
+            <button type="button" class="btn" data-sound-preview="gp_last_minute" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
         </div>
       </div>
