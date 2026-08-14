@@ -62,6 +62,16 @@ _DEFAULTS: dict = {
     #     Läufen Top-Zeiten gefahren haben (aber NICHT 5x aus dem
     #     gleichen Lauf, das wäre unfair)
     "bestof_mode":                "per_kart",
+    # Audio-Notifications im Operator-Browser. Töne werden clientseitig
+    # via Web Audio API synthetisiert (keine Assets, kein Netz-Traffic).
+    # master_volume 0.0-1.0, per-Event enabled-Flags.
+    "sounds": {
+        "master_volume":  0.7,
+        "muted":          False,
+        "print_sent":     True,
+        "orphan_passing": True,
+        "gp_last_minute": True,
+    },
     # Defekt-Erkennung pro Kart-Klasse: jede Klasse hat eigene Schwelle
     # und WMA-Fenstergröße. Wird nur im Transponder-Modal als
     # "Defekt-Verdacht"-Badge angezeigt (kein Live-Alert im Timing).

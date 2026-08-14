@@ -223,6 +223,9 @@ function handleMsg(msg) {
       updateFloatTimer();
       updateDocTitle();
       if (state.selectedRunId === msg.run_id) refreshSelectedRun();
+      // Sound "Druck gesendet": _finalize() im Backend triggert
+      // Druckauftrag + broadcast run_finished. 1× pro run_id.
+      if (window.sound) sound.play('print_sent');
       break;
 
     case 'kart_table':
@@ -237,9 +240,32 @@ function handleMsg(msg) {
         flashKartRow(msg.kart_nr);
       break;
 
+    case 'orphan_passing':
+      // Transponder-Signal ohne aktiven/scharfen Lauf – Sound-Alarm.
+      // Throttle 3s pro Transponder damit ein Kart das 10× im Leerlauf
+      // dreht nicht 30 Piepser produziert.
+      if (window.sound) sound.play('orphan_passing', {
+        throttleMs: 3000,
+        throttleKey: msg.transponder_id,
+      });
+      break;
+
     case 'timer_tick':
       if (state.activeRun) {
-        state.activeRun.remaining_sec = msg.remaining_sec;
+        const prevRem = state.activeRun.remaining_sec;
+        const currRem = msg.remaining_sec;
+        // GP letzte Minute: einmalig wenn Restzeit zum ersten Mal < 60s
+        // fällt und Rennen noch läuft (nicht in finishing).
+        const mode = state.activeRun.mode;
+        const isGp = mode === 'gp_time' || mode === 'gp_laps';
+        if (window.sound
+            && isGp
+            && state.activeRun.status === 'running'
+            && prevRem != null && prevRem >= 60
+            && currRem != null && currRem < 60) {
+          sound.play('gp_last_minute');
+        }
+        state.activeRun.remaining_sec = currRem;
         state.activeRun.elapsed_sec   = msg.elapsed_sec;
         if (msg.finish_remaining_sec != null)
           state.activeRun.finish_remaining_sec = msg.finish_remaining_sec;
@@ -1607,6 +1633,30 @@ async function loadSettings() {
   const bom = document.getElementById('s-bestof-mode');
   if (bom) bom.value = s.bestof_mode || 'per_kart';
 
+  // Sound-Konfiguration → UI + sound-Modul
+  const snd = s.sounds || {};
+  const vol   = snd.master_volume != null ? snd.master_volume : 0.7;
+  const muted = !!snd.muted;
+  const volEl = document.getElementById('s-sound-volume');
+  const volVl = document.getElementById('s-sound-volume-val');
+  const mutEl = document.getElementById('s-sound-muted');
+  const cbPS  = document.getElementById('s-sound-print-sent');
+  const cbOP  = document.getElementById('s-sound-orphan-passing');
+  const cbGP  = document.getElementById('s-sound-gp-last-minute');
+  if (volEl) volEl.value = Math.round(vol * 100);
+  if (volVl) volVl.textContent = Math.round(vol * 100) + '%';
+  if (mutEl) mutEl.checked = muted;
+  if (cbPS)  cbPS.checked = snd.print_sent     !== false;
+  if (cbOP)  cbOP.checked = snd.orphan_passing !== false;
+  if (cbGP)  cbGP.checked = snd.gp_last_minute !== false;
+  if (window.sound) sound.setConfig({
+    master_volume:  vol,
+    muted:          muted,
+    print_sent:     snd.print_sent     !== false,
+    orphan_passing: snd.orphan_passing !== false,
+    gp_last_minute: snd.gp_last_minute !== false,
+  });
+
   await loadPrinters(s.printer);
 }
 
@@ -1827,6 +1877,28 @@ document.getElementById('btn-cups-browsed-stop')?.addEventListener('click', () =
     'die Drucker manuell hinzugefügt wurden (siehe docs/PRINTER_SETUP.md).\n\n' +
     'Fortfahren?'));
 
+// ── Sound-Settings-UI ──────────────────────────────────────────────
+// Slider zeigt Prozent live, Mute-Toggle wirkt sofort, Test-Buttons
+// spielen den jeweiligen Sound auch wenn per-Event disabled ist.
+{
+  const volEl = document.getElementById('s-sound-volume');
+  const volVl = document.getElementById('s-sound-volume-val');
+  const mutEl = document.getElementById('s-sound-muted');
+  if (volEl) volEl.addEventListener('input', () => {
+    const pct = +volEl.value || 0;
+    if (volVl) volVl.textContent = pct + '%';
+    if (window.sound) sound.setVolume(pct / 100);
+  });
+  if (mutEl) mutEl.addEventListener('change', () => {
+    if (window.sound) sound.setMuted(mutEl.checked);
+  });
+  document.querySelectorAll('[data-sound-preview]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.sound) sound.preview(btn.dataset.soundPreview);
+    });
+  });
+}
+
 // Logo-Upload
 document.getElementById('btn-logo-upload').addEventListener('click', () => {
   document.getElementById('logo-file').click();
@@ -1887,7 +1959,17 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     qr_base_url:       (document.getElementById('s-qr-base-url')?.value || '').trim(),
     mobile_base_url:   (document.getElementById('s-mobile-base-url')?.value || '').trim(),
     bestof_mode:        document.getElementById('s-bestof-mode')?.value || 'per_kart',
+    sounds: {
+      master_volume:  (+document.getElementById('s-sound-volume')?.value || 70) / 100,
+      muted:          !!document.getElementById('s-sound-muted')?.checked,
+      print_sent:     !!document.getElementById('s-sound-print-sent')?.checked,
+      orphan_passing: !!document.getElementById('s-sound-orphan-passing')?.checked,
+      gp_last_minute: !!document.getElementById('s-sound-gp-last-minute')?.checked,
+    },
   };
+  // Sound-Modul sofort mit neuen Werten füttern (nicht erst beim
+  // nächsten Page-Reload wirksam werden lassen).
+  if (window.sound) sound.setConfig(body.sounds);
   // Aktuell sichtbare Defekt-Kategorie ins Buffer übernehmen, dann ALLE
   // Kategorien mit speichern (Pill-Wechsel hat sie schon vorher geflusht).
   _captureDefectCategoryFields();

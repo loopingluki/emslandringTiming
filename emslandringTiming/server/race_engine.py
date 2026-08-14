@@ -336,6 +336,14 @@ class RaceEngine:
         hits: int,
     ) -> None:
         if self.status not in ("armed", "running", "paused", "finishing"):
+            # Kein aktiver Lauf → Sound-Alarm im Operator-Browser.
+            # Verhindert vergessene Arm-Aktion und unbemerkte Gäste auf
+            # der Strecke. Frontend throttled pro Transponder.
+            await hub.broadcast({
+                "type": "orphan_passing",
+                "transponder_id": transponder_id,
+                "kart_nr": cfg.get_kart_nr(transponder_id),
+            })
             return
 
         kart_nr = cfg.get_kart_nr(transponder_id)
