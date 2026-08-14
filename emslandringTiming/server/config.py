@@ -64,13 +64,15 @@ _DEFAULTS: dict = {
     "bestof_mode":                "per_kart",
     # Audio-Notifications im Operator-Browser. Töne werden clientseitig
     # via Web Audio API synthetisiert (keine Assets, kein Netz-Traffic).
-    # master_volume 0.0-1.0, per-Event enabled-Flags.
+    # master_volume 0.0-1.0, per-Event {enabled, tone}. Verfügbare tone-
+    # Namen siehe web/static/sound.js PALETTE (beep_short, beep_double,
+    # beep_triple, ding, chime_up, chime_down, horn, buzzer).
     "sounds": {
         "master_volume":  0.7,
         "muted":          False,
-        "print_sent":     True,
-        "orphan_passing": True,
-        "gp_last_minute": True,
+        "print_sent":     {"enabled": True, "tone": "beep_double"},
+        "orphan_passing": {"enabled": True, "tone": "beep_triple"},
+        "gp_last_minute": {"enabled": True, "tone": "horn"},
     },
     # Defekt-Erkennung pro Kart-Klasse: jede Klasse hat eigene Schwelle
     # und WMA-Fenstergröße. Wird nur im Transponder-Modal als

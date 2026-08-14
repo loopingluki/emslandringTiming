@@ -1633,28 +1633,54 @@ async function loadSettings() {
   const bom = document.getElementById('s-bestof-mode');
   if (bom) bom.value = s.bestof_mode || 'per_kart';
 
-  // Sound-Konfiguration → UI + sound-Modul
+  // Sound-Konfiguration → UI + sound-Modul.
+  // Config-Format je Event: { enabled: bool, tone: string }. Für
+  // Legacy-Boolean-Configs (nur "enabled") wird der Default-Ton aus
+  // sound.DEFAULT_TONES verwendet.
   const snd = s.sounds || {};
   const vol   = snd.master_volume != null ? snd.master_volume : 0.7;
   const muted = !!snd.muted;
   const volEl = document.getElementById('s-sound-volume');
   const volVl = document.getElementById('s-sound-volume-val');
   const mutEl = document.getElementById('s-sound-muted');
-  const cbPS  = document.getElementById('s-sound-print-sent');
-  const cbOP  = document.getElementById('s-sound-orphan-passing');
-  const cbGP  = document.getElementById('s-sound-gp-last-minute');
   if (volEl) volEl.value = Math.round(vol * 100);
   if (volVl) volVl.textContent = Math.round(vol * 100) + '%';
   if (mutEl) mutEl.checked = muted;
-  if (cbPS)  cbPS.checked = snd.print_sent     !== false;
-  if (cbOP)  cbOP.checked = snd.orphan_passing !== false;
-  if (cbGP)  cbGP.checked = snd.gp_last_minute !== false;
+
+  // Ton-Dropdowns aus <template id="sound-tone-options"> befüllen –
+  // Optionen leben im HTML, damit man neue Töne einfach ergänzen kann.
+  const toneOptsTpl = document.getElementById('sound-tone-options');
+  document.querySelectorAll('[data-sound-tone-select]').forEach(sel => {
+    if (sel.options.length === 0 && toneOptsTpl) {
+      sel.appendChild(toneOptsTpl.content.cloneNode(true));
+    }
+  });
+
+  const defaults = (window.sound && sound.DEFAULT_TONES) || {
+    print_sent: 'beep_double',
+    orphan_passing: 'beep_triple',
+    gp_last_minute: 'horn',
+  };
+  const normSounds = {};
+  for (const ev of ['print_sent', 'orphan_passing', 'gp_last_minute']) {
+    const raw = snd[ev];
+    let ec;
+    if (raw && typeof raw === 'object') {
+      ec = { enabled: raw.enabled !== false, tone: raw.tone || defaults[ev] };
+    } else {
+      ec = { enabled: raw !== false, tone: defaults[ev] };
+    }
+    normSounds[ev] = ec;
+    const idBase = 's-sound-' + ev.replace(/_/g, '-');
+    const cb  = document.getElementById(idBase + '-enabled');
+    const dd  = document.getElementById(idBase + '-tone');
+    if (cb) cb.checked = ec.enabled;
+    if (dd) dd.value   = ec.tone;
+  }
   if (window.sound) sound.setConfig({
-    master_volume:  vol,
-    muted:          muted,
-    print_sent:     snd.print_sent     !== false,
-    orphan_passing: snd.orphan_passing !== false,
-    gp_last_minute: snd.gp_last_minute !== false,
+    master_volume: vol,
+    muted:         muted,
+    ...normSounds,
   });
 
   await loadPrinters(s.printer);
@@ -1892,9 +1918,17 @@ document.getElementById('btn-cups-browsed-stop')?.addEventListener('click', () =
   if (mutEl) mutEl.addEventListener('change', () => {
     if (window.sound) sound.setMuted(mutEl.checked);
   });
-  document.querySelectorAll('[data-sound-preview]').forEach(btn => {
+  document.querySelectorAll('[data-sound-preview-for]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (window.sound) sound.preview(btn.dataset.soundPreview);
+      const selId = btn.dataset.soundPreviewFor;
+      const tone = document.getElementById(selId)?.value;
+      if (window.sound && tone) sound.preview(tone);
+    });
+  });
+  // Dropdown-Wechsel spielt den neu gewählten Ton sofort einmal (schnelles Probehören)
+  document.querySelectorAll('[data-sound-tone-select]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      if (window.sound && sel.value) sound.preview(sel.value);
     });
   });
 }
@@ -1959,13 +1993,23 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     qr_base_url:       (document.getElementById('s-qr-base-url')?.value || '').trim(),
     mobile_base_url:   (document.getElementById('s-mobile-base-url')?.value || '').trim(),
     bestof_mode:        document.getElementById('s-bestof-mode')?.value || 'per_kart',
-    sounds: {
-      master_volume:  (+document.getElementById('s-sound-volume')?.value || 70) / 100,
-      muted:          !!document.getElementById('s-sound-muted')?.checked,
-      print_sent:     !!document.getElementById('s-sound-print-sent')?.checked,
-      orphan_passing: !!document.getElementById('s-sound-orphan-passing')?.checked,
-      gp_last_minute: !!document.getElementById('s-sound-gp-last-minute')?.checked,
-    },
+    sounds: (function () {
+      // Format je Event: { enabled: bool, tone: string }
+      const readEv = (ev) => {
+        const idBase = 's-sound-' + ev.replace(/_/g, '-');
+        return {
+          enabled: !!document.getElementById(idBase + '-enabled')?.checked,
+          tone:      document.getElementById(idBase + '-tone')?.value || '',
+        };
+      };
+      return {
+        master_volume:  (+document.getElementById('s-sound-volume')?.value || 70) / 100,
+        muted:          !!document.getElementById('s-sound-muted')?.checked,
+        print_sent:     readEv('print_sent'),
+        orphan_passing: readEv('orphan_passing'),
+        gp_last_minute: readEv('gp_last_minute'),
+      };
+    })(),
   };
   // Sound-Modul sofort mit neuen Werten füttern (nicht erst beim
   // nächsten Page-Reload wirksam werden lassen).

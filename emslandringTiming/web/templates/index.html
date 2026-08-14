@@ -514,21 +514,35 @@
           </label>
         </div>
 
+        <template id="sound-tone-options">
+          <option value="beep_short">Beep kurz</option>
+          <option value="beep_double">Doppel-Beep</option>
+          <option value="beep_triple">Dreifach-Beep</option>
+          <option value="ding">Ding</option>
+          <option value="chime_up">Chime aufsteigend</option>
+          <option value="chime_down">Chime absteigend</option>
+          <option value="horn">Signalhorn</option>
+          <option value="buzzer">Summer</option>
+        </template>
+
         <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="checkbox" id="s-sound-print-sent" style="flex:0 0 auto">
-            <label for="s-sound-print-sent" style="flex:1;font-size:12px;cursor:pointer">Druck gesendet</label>
-            <button type="button" class="btn" data-sound-preview="print_sent" style="font-size:11px;flex:0 0 auto">▶ Test</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <input type="checkbox" id="s-sound-print-sent-enabled" style="flex:0 0 auto">
+            <label for="s-sound-print-sent-enabled" style="flex:1;min-width:180px;font-size:12px;cursor:pointer">Druck gesendet</label>
+            <select id="s-sound-print-sent-tone" data-sound-tone-select style="font-size:11px;flex:0 0 auto"></select>
+            <button type="button" class="btn" data-sound-preview-for="s-sound-print-sent-tone" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="checkbox" id="s-sound-orphan-passing" style="flex:0 0 auto">
-            <label for="s-sound-orphan-passing" style="flex:1;font-size:12px;cursor:pointer">Transponder ohne aktiven Lauf</label>
-            <button type="button" class="btn" data-sound-preview="orphan_passing" style="font-size:11px;flex:0 0 auto">▶ Test</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <input type="checkbox" id="s-sound-orphan-passing-enabled" style="flex:0 0 auto">
+            <label for="s-sound-orphan-passing-enabled" style="flex:1;min-width:180px;font-size:12px;cursor:pointer">Transponder ohne aktiven Lauf</label>
+            <select id="s-sound-orphan-passing-tone" data-sound-tone-select style="font-size:11px;flex:0 0 auto"></select>
+            <button type="button" class="btn" data-sound-preview-for="s-sound-orphan-passing-tone" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="checkbox" id="s-sound-gp-last-minute" style="flex:0 0 auto">
-            <label for="s-sound-gp-last-minute" style="flex:1;font-size:12px;cursor:pointer">Grand Prix letzte Minute (&lt; 60s)</label>
-            <button type="button" class="btn" data-sound-preview="gp_last_minute" style="font-size:11px;flex:0 0 auto">▶ Test</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <input type="checkbox" id="s-sound-gp-last-minute-enabled" style="flex:0 0 auto">
+            <label for="s-sound-gp-last-minute-enabled" style="flex:1;min-width:180px;font-size:12px;cursor:pointer">Grand Prix letzte Minute (&lt; 60s)</label>
+            <select id="s-sound-gp-last-minute-tone" data-sound-tone-select style="font-size:11px;flex:0 0 auto"></select>
+            <button type="button" class="btn" data-sound-preview-for="s-sound-gp-last-minute-tone" style="font-size:11px;flex:0 0 auto">▶ Test</button>
           </div>
         </div>
       </div>
