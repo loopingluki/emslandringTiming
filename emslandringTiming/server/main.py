@@ -3,6 +3,7 @@ emslandringTiming – Haupteinstiegspunkt.
 Startet FastAPI, Decoder, Emulator und Race-Engine.
 """
 import asyncio
+import ipaddress
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -142,12 +143,26 @@ app.mount("/fonts", StaticFiles(directory=str(BASE / "server" / "data" / "fonts"
 
 # ── Public-Access-Kontrolle (Tailscale-Funnel-Schutz) ─────────────────────────
 # Der Server läuft auf 0.0.0.0:http_port und ist damit erreichbar über:
-#   1. LAN (Kiosk, Mitarbeiter-Mobile im WLAN) – Client-IP im 192.168.x-Range
-#   2. Tailnet direkt (Admin via Tailscale-App) – Client-IP im 100.64.0.0/10-CGNAT
+#   1. LAN (Kiosk, Mitarbeiter-Mobile im WLAN) – Client-IP im 192.168.x
+#      (bzw. 10.x / 172.16-31 falls Netzwerk umgezogen wird)
+#   2. Tailnet direkt (Admin via Tailscale-App) – Client-IP im
+#      100.64.0.0/10 (IPv4-CGNAT) oder fd7a:115c:a1e0::/48 (IPv6-ULA)
 #   3. Tailscale-Funnel (öffentliches Internet via QR-Scan) – Traffic wird
-#      von tailscaled auf 127.0.0.1 geproxyt, X-Forwarded-For enthält die
-#      Public-IP des Externals. Nur so kommt Traffic aus dem Internet rein.
-# Nur (3) muss beschränkt werden – für (1) und (2) bleibt Vollzugriff.
+#      von tailscaled auf 127.0.0.1 / ::1 geproxyt. Der einzige Weg wie
+#      Traffic aus dem Internet ans System kommt.
+#
+# Strategie: DEFAULT-DENY-Whitelist. Nur Requests aus (1) oder (2) bekommen
+# Vollzugriff. Alles andere – inkl. Loopback (= Funnel) und jede sonstige
+# Quelle – nur Whitelist. Robust auch wenn Tailscale seine Funnel-Header
+# irgendwann ändert, weil wir nur auf den Client-Host schauen.
+
+TRUSTED_NETWORKS: tuple = tuple(ipaddress.ip_network(n) for n in (
+    "192.168.0.0/16",       # LAN (Kiosk, Mitarbeiter-Mobile)
+    "10.0.0.0/8",           # RFC1918 (Fallback falls Netz-Umzug)
+    "172.16.0.0/12",        # RFC1918 (Fallback)
+    "100.64.0.0/10",        # Tailscale CGNAT IPv4 (Admin-Direktzugriff)
+    "fd7a:115c:a1e0::/48",  # Tailscale ULA IPv6
+))
 
 FUNNEL_WHITELIST_PREFIXES: tuple[str, ...] = (
     "/record/",            # QR-Landing-Page HTML (Kunde nach Scan)
@@ -158,25 +173,28 @@ FUNNEL_WHITELIST_PREFIXES: tuple[str, ...] = (
     "/fonts/",             # WeasyPrint-Fonts (falls im Frontend genutzt)
 )
 
-def _is_public_via_funnel(scope_client_host: str, x_forwarded_for: str | None) -> bool:
-    """Erkennt Tailscale-Funnel-Traffic. tailscaled proxyt Public-Requests
-    ausschließlich lokal auf 127.0.0.1/::1 und setzt dabei X-Forwarded-For
-    mit der echten Client-IP. LAN- und Tailnet-Direktzugriff hat keine
-    dieser beiden Bedingungen kombiniert.
-    """
-    if scope_client_host not in ("127.0.0.1", "::1"):
+def _is_trusted_origin(client_host: str) -> bool:
+    """True nur wenn Client aus einem der TRUSTED_NETWORKS kommt.
+    Loopback (127.0.0.1 / ::1) ist bewusst NICHT drin: Tailscale-Funnel
+    proxyt Public-Traffic exakt von dort → per Ausschluss ist Loopback
+    unser Funnel-Signal. Alles Unbekannte fällt ebenfalls raus →
+    Whitelist-Only für maximale Sicherheit."""
+    if not client_host:
         return False
-    return x_forwarded_for is not None
+    try:
+        addr = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+    return any(addr in net for net in TRUSTED_NETWORKS)
 
 def _is_public_whitelisted(path: str) -> bool:
     return any(path.startswith(p) or path == p.rstrip("/")
                for p in FUNNEL_WHITELIST_PREFIXES)
 
 @app.middleware("http")
-async def restrict_funnel_access(request: Request, call_next):
+async def restrict_public_access(request: Request, call_next):
     client_host = request.client.host if request.client else ""
-    xff = request.headers.get("x-forwarded-for")
-    if _is_public_via_funnel(client_host, xff) and not _is_public_whitelisted(request.url.path):
+    if not _is_trusted_origin(client_host) and not _is_public_whitelisted(request.url.path):
         # Bewusst wenig aussagekräftige Antwort – kein Info-Leak für Scanner.
         return JSONResponse({"detail": "Not found"}, status_code=404)
     return await call_next(request)
@@ -206,9 +224,8 @@ async def websocket_endpoint(ws: WebSocket, client: str = "app"):
     # WebSocket geht NICHT durch die HTTP-Middleware – muss separat geprüft
     # werden. Andernfalls könnte ein Angreifer via Funnel den Live-Rennverlauf
     # aller Läufe passiv mitlesen (kart_table, timer_tick, passing, ...).
-    xff = ws.headers.get("x-forwarded-for")
     client_host = ws.client.host if ws.client else ""
-    if _is_public_via_funnel(client_host, xff):
+    if not _is_trusted_origin(client_host):
         await ws.close(code=1008)  # Policy Violation
         return
     client_type = client if client in ("app", "dashboard") else "other"
