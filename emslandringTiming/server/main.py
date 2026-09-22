@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config as cfg
@@ -140,10 +140,77 @@ app.mount("/static", StaticFiles(directory=str(WEB_STATIC)), name="static")
 app.mount("/fonts", StaticFiles(directory=str(BASE / "server" / "data" / "fonts")), name="fonts")
 
 
+# ── Public-Access-Kontrolle (Tailscale-Funnel-Schutz) ─────────────────────────
+# Der Server läuft auf 0.0.0.0:http_port und ist damit erreichbar über:
+#   1. LAN (Kiosk, Mitarbeiter-Mobile im WLAN) – Client-IP im 192.168.x-Range
+#   2. Tailnet direkt (Admin via Tailscale-App) – Client-IP im 100.64.0.0/10-CGNAT
+#   3. Tailscale-Funnel (öffentliches Internet via QR-Scan) – Traffic wird
+#      von tailscaled auf 127.0.0.1 geproxyt, X-Forwarded-For enthält die
+#      Public-IP des Externals. Nur so kommt Traffic aus dem Internet rein.
+# Nur (3) muss beschränkt werden – für (1) und (2) bleibt Vollzugriff.
+
+FUNNEL_WHITELIST_PREFIXES: tuple[str, ...] = (
+    "/record/",            # QR-Landing-Page HTML (Kunde nach Scan)
+    "/api/record/",        # Token-Info (GET) + Name eintragen (POST)
+    "/api/bestof",         # Bestenliste-Daten (bereits gefiltert)
+    "/api/logo",           # Logo-Bild für die Landing-Seiten
+    "/static/",            # CSS / JS / Fonts
+    "/fonts/",             # WeasyPrint-Fonts (falls im Frontend genutzt)
+)
+
+def _is_public_via_funnel(scope_client_host: str, x_forwarded_for: str | None) -> bool:
+    """Erkennt Tailscale-Funnel-Traffic. tailscaled proxyt Public-Requests
+    ausschließlich lokal auf 127.0.0.1/::1 und setzt dabei X-Forwarded-For
+    mit der echten Client-IP. LAN- und Tailnet-Direktzugriff hat keine
+    dieser beiden Bedingungen kombiniert.
+    """
+    if scope_client_host not in ("127.0.0.1", "::1"):
+        return False
+    return x_forwarded_for is not None
+
+def _is_public_whitelisted(path: str) -> bool:
+    return any(path.startswith(p) or path == p.rstrip("/")
+               for p in FUNNEL_WHITELIST_PREFIXES)
+
+@app.middleware("http")
+async def restrict_funnel_access(request: Request, call_next):
+    client_host = request.client.host if request.client else ""
+    xff = request.headers.get("x-forwarded-for")
+    if _is_public_via_funnel(client_host, xff) and not _is_public_whitelisted(request.url.path):
+        # Bewusst wenig aussagekräftige Antwort – kein Info-Leak für Scanner.
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
+
+
+# ── Rate-Limit für Namens-Eintrag (Anti-Spam) ─────────────────────────────────
+# Simple In-Memory-Throttling ohne Redis. Reicht für unser Traffic-Level.
+_record_post_history: dict[str, list[float]] = {}
+
+def _rate_limit_record_post(ip: str, max_per_min: int = 5) -> bool:
+    """Gibt True zurück wenn der Request unter dem Limit ist (= erlaubt).
+    Alte Einträge (>60s) werden bei jedem Aufruf verworfen (self-cleaning).
+    """
+    now = time.time()
+    hist = _record_post_history.setdefault(ip, [])
+    hist[:] = [t for t in hist if now - t < 60]
+    if len(hist) >= max_per_min:
+        return False
+    hist.append(now)
+    return True
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket, client: str = "app"):
+    # WebSocket geht NICHT durch die HTTP-Middleware – muss separat geprüft
+    # werden. Andernfalls könnte ein Angreifer via Funnel den Live-Rennverlauf
+    # aller Läufe passiv mitlesen (kart_table, timer_tick, passing, ...).
+    xff = ws.headers.get("x-forwarded-for")
+    client_host = ws.client.host if ws.client else ""
+    if _is_public_via_funnel(client_host, xff):
+        await ws.close(code=1008)  # Policy Violation
+        return
     client_type = client if client in ("app", "dashboard") else "other"
     await hub.connect(ws, client_type)
     try:
@@ -869,8 +936,22 @@ async def api_record_get(token: str):
 
 
 @app.post("/api/record/{token}")
-async def api_record_post(token: str, body: dict):
-    """Customer trägt seinen Namen ein. Profanity-Check serverseitig."""
+async def api_record_post(token: str, body: dict, request: Request):
+    """Customer trägt seinen Namen ein. Profanity-Check serverseitig.
+    Rate-Limit: max 5 POSTs pro Minute pro Client-IP (Anti-Spam).
+    Bei Traffic über Funnel wird die echte Public-IP aus X-Forwarded-For
+    genommen – sonst würden alle Externals wie 127.0.0.1 aussehen.
+    """
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        # X-Forwarded-For kann Kette sein "client, proxy1, proxy2".
+        # Erster Eintrag ist die Original-Client-IP.
+        ip = xff.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+    if not _rate_limit_record_post(ip):
+        raise HTTPException(429, "Zu viele Anfragen – bitte kurz warten.")
+
     claim = await database.get_claim_by_token(token)
     if not claim:
         raise HTTPException(404, "Diese Runde gibt es nicht oder sie wurde gelöscht.")
